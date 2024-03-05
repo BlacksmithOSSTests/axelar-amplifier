@@ -13,7 +13,7 @@ name: Basic
 jobs:
   test:
     name: Test Suite
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: blacksmith-staging-8vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@v4
 
@@ -43,7 +43,7 @@ jobs:
 
   cosmwasm-compilation:
     name: Cosmwasm Compilation
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: blacksmith-staging-8vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@v4
 
@@ -79,7 +79,7 @@ jobs:
 
   lints:
     name: Lints
-    runs-on: blacksmith-8vcpu-ubuntu-2204
+    runs-on: blacksmith-staging-8vcpu-ubuntu-2204
     steps:
       - uses: actions/checkout@v4
 
