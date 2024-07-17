@@ -62,7 +62,7 @@ jobs:
         id: cache
         uses: useblacksmith/rust-cache@test-older-version
         with:
-          shared-key: "cache-cosmwasm-compilation-foo-bar"
+          shared-key: "cache-cosmwasm-compilation-foo-baz"
 
       - name: Log crates.toml
         if: steps.cache.outputs.cache-hit == 'true'
