@@ -49,6 +49,9 @@ jobs:
     runs-on: blacksmith
     steps:
       - uses: actions/checkout@v4
+      
+      - name: Log crates.toml
+        run: cat /home/runner/.cargo/.crates.toml
 
       - name: Install stable toolchain
         uses: actions-rs/toolchain@v1
@@ -58,6 +61,9 @@ jobs:
           target: wasm32-unknown-unknown
           override: true
 
+      - name: Log crates.toml
+        run: cat /home/runner/.cargo/.crates.toml
+      
       - name: Cache build artifacts
         id: cache
         uses: useblacksmith/rust-cache@test-older-version
