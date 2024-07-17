@@ -47,7 +47,7 @@ jobs:
 
   cosmwasm-compilation:
     name: Cosmwasm Compilation
-    runs-on: blacksmith-2vcpu-ubuntu-2204
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -61,7 +61,7 @@ jobs:
 
       - name: Cache build artifacts
         id: cache
-        uses: useblacksmith/rust-cache@v3.0.1
+        uses: Swatinem/rust-cache@v2
         with:
           shared-key: "cache-cosmwasm-compilation"
 
