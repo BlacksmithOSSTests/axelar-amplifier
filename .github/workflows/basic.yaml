@@ -60,9 +60,9 @@ jobs:
 
       - name: Cache build artifacts
         id: cache
-        uses: Swatinem/rust-cache@v2
+        uses: useblacksmith/rust-cache@test-older-version
         with:
-          shared-key: "cache-cosmwasm-compilation-foo"
+          shared-key: "cache-cosmwasm-compilation-foo-bar"
 
       - name: Log crates.toml
         if: steps.cache.outputs.cache-hit == 'true'
