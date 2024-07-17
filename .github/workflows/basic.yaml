@@ -48,6 +48,12 @@ jobs:
     name: Cosmwasm Compilation Blacksmith
     runs-on: blacksmith
     steps:
+      - name: Cache build artifacts
+        id: cache
+        uses: useblacksmith/rust-cache@test-older-version
+        with:
+          shared-key: "cache-cosmwasm-compilation-foo-bad"
+
       - uses: actions/checkout@v4
       
       - name: Log crates.toml
@@ -63,12 +69,6 @@ jobs:
 
       - name: Log crates.toml
         run: cat /home/runner/.cargo/.crates.toml
-      
-      - name: Cache build artifacts
-        id: cache
-        uses: useblacksmith/rust-cache@test-older-version
-        with:
-          shared-key: "cache-cosmwasm-compilation-foo-bad"
 
       - name: Log crates.toml
         if: steps.cache.outputs.cache-hit == 'true'
