@@ -52,7 +52,7 @@ jobs:
 
       - name: Cache build artifacts
         id: cache
-        uses: useblacksmith/rust-cache@v3.0.1
+        uses: useblacksmith/rust-cache@test-branch-2
         with:
           shared-key: "cache-cosmwasm-compilation-axelar-test"
       
