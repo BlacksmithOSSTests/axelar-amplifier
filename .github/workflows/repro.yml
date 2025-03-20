@@ -10,24 +10,24 @@ jobs:
     steps:
       - name: Generate unique content
         run: |
-          echo "Hello World - $(date)" > hello.txt
+          echo "Hello World - $(date) - Run ID: ${{ github.run_id }} - Run Number: ${{ github.run_number }}" > hello.txt
           echo "Generated content: $(cat hello.txt)"
 
       - name: Cache file
-        uses: useblacksmith/cache@v5
+        uses: useblacksmith/cache/save@v5
         with:
           path: hello.txt
-          key: hello-file-${{ github.run_id }}
+          key: hello-file-${{ github.run_id }}-${{ github.run_number }}
 
   read-file:
     needs: create-file
     runs-on: blacksmith
     steps:
       - name: Restore cached file
-        uses: useblacksmith/cache@v5
+        uses: useblacksmith/cache/restore@v5
         with:
           path: hello.txt
-          key: hello-file-${{ github.run_id }}
+          key: hello-file-${{ github.run_id }}-${{ github.run_number }}
           fail-on-cache-miss: true
 
       - name: Read file
