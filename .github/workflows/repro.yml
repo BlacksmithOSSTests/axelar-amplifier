@@ -1,0 +1,36 @@
+name: Reproduction Workflow
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  create-file:
+    runs-on: blacksmith
+    steps:
+      - name: Generate unique content
+        run: |
+          echo "Hello World - $(date)" > hello.txt
+          echo "Generated content: $(cat hello.txt)"
+
+      - name: Cache file
+        uses: useblacksmith/cache@v5
+        with:
+          path: hello.txt
+          key: hello-file-${{ github.run_id }}
+
+  read-file:
+    needs: create-file
+    runs-on: blacksmith
+    steps:
+      - name: Restore cached file
+        uses: useblacksmith/cache@v5
+        with:
+          path: hello.txt
+          key: hello-file-${{ github.run_id }}
+          fail-on-cache-miss: true
+
+      - name: Read file
+        run: |
+          echo "Content of hello.txt:"
+          cat hello.txt
