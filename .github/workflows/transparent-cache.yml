@@ -19,6 +19,7 @@ jobs:
       ACTIONS_RUNTIME_TOKEN_VERBOSE: true
       ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: true
       RUNNER_DEBUG: 1
+      NODE_DEBUG: "http"
       ACTIONS_CACHE_DEBUG: true
 
     steps:
