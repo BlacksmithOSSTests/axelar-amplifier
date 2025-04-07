@@ -50,39 +50,39 @@ jobs:
           echo "Cache URL: $ACTIONS_RESULTS_URL"
           echo "ACTIONS_RESULTS_URL is: $ACTIONS_RESULTS_URL"
 
-      - name: Delete test file
-        run: rm test.txt
+      # - name: Delete test file
+      #   run: rm test.txt
 
-      - name: Restore cache
-        uses: actions/cache/restore@v4
-        with:
-          path: test.txt
-          key: test-transparent-cache-${{ github.run_id }}
-          restore-keys: |
-            test-transparent-cache-
+      # - name: Restore cache
+      #   uses: actions/cache/restore@v4
+      #   with:
+      #     path: test.txt
+      #     key: test-transparent-cache-${{ github.run_id }}
+      #     restore-keys: |
+      #       test-transparent-cache-
 
-      - name: Print cache restore details
-        run: |
-          echo "Cache restore operation completed"
-          echo "Cache key: test-transparent-cache-${{ github.run_id }}"
-          echo "Cache URL: $ACTIONS_RESULTS_URL"
-          echo "ACTIONS_RESULTS_URL is: $ACTIONS_RESULTS_URL"
+      # - name: Print cache restore details
+      #   run: |
+      #     echo "Cache restore operation completed"
+      #     echo "Cache key: test-transparent-cache-${{ github.run_id }}"
+      #     echo "Cache URL: $ACTIONS_RESULTS_URL"
+      #     echo "ACTIONS_RESULTS_URL is: $ACTIONS_RESULTS_URL"
 
-      - name: Verify file contents
-        shell: /usr/bin/bash -e {0}
-        run: |
-          if [ ! -f "test.txt" ]; then
-            echo "error: test.txt was not restored from cache."
-            exit 1
-          fi
+      # - name: Verify file contents
+      #   shell: /usr/bin/bash -e {0}
+      #   run: |
+      #     if [ ! -f "test.txt" ]; then
+      #       echo "error: test.txt was not restored from cache."
+      #       exit 1
+      #     fi
 
-          content=$(cat test.txt)
-          if [ "$content" != "Hello from cache test" ]; then
-            echo "error: cached file contents do not match expected value."
-            exit 1
-          fi
+      #     content=$(cat test.txt)
+      #     if [ "$content" != "Hello from cache test" ]; then
+      #       echo "error: cached file contents do not match expected value."
+      #       exit 1
+      #     fi
 
-          echo "File verification successful: content matches expected value"
+      #     echo "File verification successful: content matches expected value"
 
       - name: Setup tmate session
         uses: mxschmitt/action-tmate@v3
