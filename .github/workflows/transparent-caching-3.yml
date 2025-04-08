@@ -138,13 +138,13 @@ jobs:
           chmod +x cache_save_wrapper.sh
           ./cache_save_wrapper.sh
           
-      - name: Upload SDK logs
-        uses: actions/upload-artifact@v4  # Updated to v4
-        with:
-          name: sdk-logs
-          path: |
-            sdk_verbose_logs.txt
-            cache_operation_*.txt
+      # - name: Upload SDK logs
+      #   uses: actions/upload-artifact@v4  # Updated to v4
+      #   with:
+      #     name: sdk-logs
+      #     path: |
+      #       sdk_verbose_logs.txt
+      #       cache_operation_*.txt
           
       - name: Try native cache action
         id: cache-action-save
