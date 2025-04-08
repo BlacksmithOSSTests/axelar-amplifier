@@ -188,13 +188,16 @@ jobs:
           fi
 
       # Use tmate directly without proxy
+      - name: Remove proxy environment variables
+        run: |
+          echo "http_proxy=" >> $GITHUB_ENV
+          echo "https_proxy=" >> $GITHUB_ENV
+          echo "HTTP_PROXY=" >> $GITHUB_ENV
+          echo "HTTPS_PROXY=" >> $GITHUB_ENV
+          echo "NODE_EXTRA_CA_CERTS=" >> $GITHUB_ENV
+          echo "Environment variables unset for next steps"
+      
       - name: Setup tmate session without proxy
         uses: mxschmitt/action-tmate@v3
-        env:
-          http_proxy: ""
-          https_proxy: ""
-          HTTP_PROXY: ""
-          HTTPS_PROXY: ""
-          NODE_EXTRA_CA_CERTS: ""
         with:
           detached: true
