@@ -19,10 +19,39 @@ jobs:
       ACTIONS_RUNTIME_TOKEN_VERBOSE: true
       ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: true
       RUNNER_DEBUG: 1
-      NODE_DEBUG: "http,http2,net,stream"
+      # NODE_DEBUG: "http,http2,net,stream"
       ACTIONS_CACHE_DEBUG: true
 
     steps:
+      - name: Install mitmproxy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y mitmproxy ca-certificates
+
+      - name: Set up mitmproxy certificate
+        run: |
+          mkdir -p ~/.mitmproxy
+          mitmdump --set confdir=~/.mitmproxy -s "$(cat <<'EOF'
+          def response(flow):
+              flow.response.headers["mitmproxy-note"] = "captured-by-workflow"
+          EOF
+          )" --no-http2 --quiet & 
+          sleep 5
+          echo $! > mitmproxy.pid
+          
+          # Trust the mitmproxy certificate
+          sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt
+          sudo update-ca-certificates
+        
+      - name: Configure system to use proxy
+        run: |
+          # Set environment variables for the proxy
+          echo "http_proxy=http://127.0.0.1:8080" >> $GITHUB_ENV
+          echo "https_proxy=http://127.0.0.1:8080" >> $GITHUB_ENV
+          echo "HTTP_PROXY=http://127.0.0.1:8080" >> $GITHUB_ENV
+          echo "HTTPS_PROXY=http://127.0.0.1:8080" >> $GITHUB_ENV
+          echo "NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/mitmproxy.crt" >> $GITHUB_ENV
+        
       - name: Create test file
         run: |
           echo "Hello from cache test" > test.txt
@@ -39,9 +68,13 @@ jobs:
 
       - name: Save cache
         uses: actions/cache/save@v4
+        env:
+          http_proxy: http://127.0.0.1:8080
+          https_proxy: http://127.0.0.1:8080
+          NODE_TLS_REJECT_UNAUTHORIZED: '0'  # Only for this test environment
         with:
           path: test.txt
-          key: test-transparent-cache-${{ github.run_id }}
+          key: test-transparent-cache-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Print cache save details
         run: |
@@ -49,6 +82,23 @@ jobs:
           echo "Cache key: test-transparent-cache-${{ github.run_id }}"
           echo "Cache URL: $ACTIONS_RESULTS_URL"
           echo "ACTIONS_RESULTS_URL is: $ACTIONS_RESULTS_URL"
+
+      - name: Stop mitmproxy and export data
+        run: |
+          if [ -f mitmproxy.pid ]; then
+            # Export flow data before killing
+            cp ~/.mitmproxy/flows cache_flows.flows
+            sudo kill $(cat mitmproxy.pid) || true
+          fi
+          
+          # Convert flows to a readable format
+          mitmdump -n -r cache_flows.flows --set flow_detail=3 -d > mitmproxy_dump.txt
+          
+          # Extract just the URLs and request details
+          grep -E "GET|POST|PUT|DELETE" mitmproxy_dump.txt > http_requests.txt
+          
+          # Create summary of hosts contacted
+          grep -E "Host:" mitmproxy_dump.txt | sort | uniq -c | sort -nr > hosts_summary.txt
 
       # - name: Delete test file
       #   run: rm test.txt
