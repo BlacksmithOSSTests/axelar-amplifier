@@ -1,3 +1,4 @@
+```yaml
 name: Cache Test with tcpdump
 
 on:
@@ -166,10 +167,6 @@ jobs:
         continue-on-error: true
         uses: actions/cache/save@v4
         env:
-          http_proxy: http://127.0.0.1:8080
-          https_proxy: http://127.0.0.1:8080
-          HTTP_PROXY: http://127.0.0.1:8080
-          HTTPS_PROXY: http://127.0.0.1:8080
           NODE_TLS_REJECT_UNAUTHORIZED: '0'  # Only for test environment
         with:
           path: test.txt
@@ -278,3 +275,4 @@ jobs:
           ACTIONS_RUNTIME_TOKEN: ${{env.ACTIONS_RUNTIME_TOKEN}}
         with:
           detached: true
+```
