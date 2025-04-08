@@ -1,4 +1,3 @@
-```yaml
 name: Cache Metadata Debug - Simplified
 
 on:
@@ -303,4 +302,3 @@ jobs:
         uses: mxschmitt/action-tmate@v3
         with:
           detached: true
-```
