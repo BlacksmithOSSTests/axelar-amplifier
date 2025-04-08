@@ -1,4 +1,5 @@
-name: Cache Test
+```yaml
+name: Cache Test with tcpdump
 
 on:
   pull_request:
@@ -22,66 +23,11 @@ jobs:
       ACTIONS_CACHE_DEBUG: true
 
     steps:
-      - name: Install mitmproxy
+      - name: Install tcpdump
         run: |
           sudo apt-get update
-          sudo apt-get install -y mitmproxy ca-certificates
-          which mitmdump
-          mitmdump --version
+          sudo apt-get install -y tcpdump
 
-      - name: Create script file
-        run: |
-          mkdir -p ~/.mitmproxy
-          cat > ~/.mitmproxy/modify_headers.py << 'EOF'
-          def response(flow):
-              flow.response.headers["mitmproxy-note"] = "captured-by-workflow"
-          EOF
-          cat ~/.mitmproxy/modify_headers.py
-
-      - name: Set up mitmproxy certificate
-        run: |
-          # Start mitmproxy with explicit details and check if it's running
-          mitmdump --set confdir=~/.mitmproxy -s ~/.mitmproxy/modify_headers.py --listen-host 127.0.0.1 --listen-port 8080 --no-http2 &
-          
-          # Store the PID and wait for proxy to initialize
-          echo $! > mitmproxy.pid
-          sleep 10
-          
-          # Verify mitmproxy is running
-          if ps -p $(cat mitmproxy.pid) > /dev/null; then
-            echo "Mitmproxy is running with PID $(cat mitmproxy.pid)"
-          else
-            echo "Mitmproxy failed to start"
-            exit 1
-          fi
-          
-          # Check if port 8080 is listening
-          netstat -tulpn | grep 8080 || echo "Port 8080 is not listening"
-          
-          # Check if the certificate was generated
-          ls -la ~/.mitmproxy/
-          
-          if [ -f ~/.mitmproxy/mitmproxy-ca-cert.pem ]; then
-            echo "Certificate file exists"
-            # Trust the mitmproxy certificate
-            sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt
-            sudo update-ca-certificates
-          else
-            echo "Certificate file does not exist, attempting to generate it"
-            # Attempt to generate certificate explicitly
-            mitmdump --set confdir=~/.mitmproxy --generate-ca-cert
-            ls -la ~/.mitmproxy/
-            
-            if [ -f ~/.mitmproxy/mitmproxy-ca-cert.pem ]; then
-              sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt
-              sudo update-ca-certificates
-            else
-              echo "Failed to generate certificate"
-              exit 1
-            fi
-          fi
-      
-      # Create test file and perform cache operations WITHOUT proxy initially
       - name: Create test file
         run: |
           echo "Hello from cache test" > test.txt
@@ -95,168 +41,242 @@ jobs:
           echo "ACTIONS_RUNTIME_TOKEN: ${ACTIONS_RUNTIME_TOKEN:0:5}..."
           echo "Using ACTIONS_CACHE_URL: $ACTIONS_CACHE_URL"
           echo "Using ACTIONS_RESULTS_URL: $ACTIONS_RESULTS_URL"
+      
+      - name: Setup node for HTTP inspection
+        run: |
+          node -v
+          npm -v
+          
+          # Create a simple HTTP inspection script
+          cat > http-logger.js << 'EOF'
+          const http = require('http');
+          const https = require('https');
+          const fs = require('fs');
+          const { spawn } = require('child_process');
+          
+          // Create log file
+          const logFile = fs.createWriteStream('http_requests.log', { flags: 'a' });
+          
+          // Function to log details
+          function logRequest(req, res, body = '') {
+            const timestamp = new Date().toISOString();
+            const log = `\n[${timestamp}] ${req.method} ${req.url}\n`;
+            logFile.write(log);
+            logFile.write(`Headers: ${JSON.stringify(req.headers, null, 2)}\n`);
+            if (body) {
+              logFile.write(`Body: ${body}\n`);
+            }
+            logFile.write(`--------------------------\n`);
+          }
+          
+          // Create a simple HTTP proxy
+          const proxy = http.createServer((req, res) => {
+            console.log(`Proxying: ${req.method} ${req.url}`);
+            
+            let body = '';
+            req.on('data', (chunk) => {
+              body += chunk;
+            });
+            
+            req.on('end', () => {
+              logRequest(req, res, body);
+              
+              // Determine if this is HTTP or HTTPS
+              const options = new URL(req.url);
+              const proxyReq = (options.protocol === 'https:' ? https : http).request(
+                options,
+                (proxyRes) => {
+                  res.writeHead(proxyRes.statusCode, proxyRes.headers);
+                  proxyRes.pipe(res, { end: true });
+                }
+              );
+              
+              proxyReq.on('error', (error) => {
+                console.error(`Proxy request error: ${error.message}`);
+                res.writeHead(500);
+                res.end(`Proxy error: ${error.message}`);
+              });
+              
+              if (body) {
+                proxyReq.write(body);
+              }
+              
+              proxyReq.end();
+            });
+          });
+          
+          // Start tcpdump
+          const tcpdump = spawn('sudo', [
+            'tcpdump', 
+            '-i', 'any', 
+            '-n',
+            'port 80 or port 443 or port 9090 or port 9091', 
+            '-w', 'cache_traffic.pcap'
+          ]);
+          
+          tcpdump.stdout.on('data', (data) => {
+            console.log(`tcpdump stdout: ${data}`);
+          });
+          
+          tcpdump.stderr.on('data', (data) => {
+            console.error(`tcpdump stderr: ${data}`);
+          });
+          
+          // Start the proxy server
+          proxy.listen(8080, () => {
+            console.log('Proxy server listening on port 8080');
+          });
+          
+          // Handle cleanup
+          process.on('SIGINT', () => {
+            console.log('Stopping proxy server and tcpdump');
+            proxy.close();
+            tcpdump.kill('SIGINT');
+            process.exit();
+          });
+          EOF
+          
+          # Start the HTTP inspection script
+          node http-logger.js &
+          echo $! > http-logger.pid
+          sleep 5
+          
+          # Check if the script is running
+          if ps -p $(cat http-logger.pid) > /dev/null; then
+            echo "HTTP logger script is running with PID $(cat http-logger.pid)"
+          else
+            echo "HTTP logger script failed to start"
+            exit 1
+          fi
 
-      # First try to save cache without proxy to establish baseline
-      - name: Save cache (no proxy)
+      - name: Save cache without proxy (baseline)
         uses: actions/cache/save@v4
         with:
           path: test.txt
-          key: test-transparent-cache-no-proxy-${{ github.run_id }}-${{ github.run_attempt }}
+          key: test-direct-cache-${{ github.run_id }}-${{ github.run_attempt }}
 
-      # Test if curl works with the proxy
-      - name: Test proxy with curl
+      - name: Setup proxy environment
         run: |
-          echo "Testing proxy connectivity..."
-          curl -v --proxy http://127.0.0.1:8080 https://httpbin.org/get || echo "Proxy connection failed"
-          
-          # If proxy test fails, try direct connection
-          if [ $? -ne 0 ]; then
-            echo "Testing direct connection..."
-            curl -v https://httpbin.org/get
-          fi
-
-      # Now try with proxy (only if proxy test succeeded)
-      - name: Configure system to use proxy
-        run: |
-          # Set environment variables for the proxy
           echo "http_proxy=http://127.0.0.1:8080" >> $GITHUB_ENV
           echo "https_proxy=http://127.0.0.1:8080" >> $GITHUB_ENV
           echo "HTTP_PROXY=http://127.0.0.1:8080" >> $GITHUB_ENV
           echo "HTTPS_PROXY=http://127.0.0.1:8080" >> $GITHUB_ENV
-          echo "NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/mitmproxy.crt" >> $GITHUB_ENV
-        
-      - name: Save cache with proxy
+
+      - name: Save cache with proxy logging
         id: cache-with-proxy
-        uses: actions/cache/save@v4
         continue-on-error: true
+        uses: actions/cache/save@v4
         env:
           http_proxy: http://127.0.0.1:8080
           https_proxy: http://127.0.0.1:8080
-          NODE_TLS_REJECT_UNAUTHORIZED: '0'  # Only for this test environment
+          HTTP_PROXY: http://127.0.0.1:8080
+          HTTPS_PROXY: http://127.0.0.1:8080
+          NODE_TLS_REJECT_UNAUTHORIZED: '0'  # Only for test environment
         with:
           path: test.txt
-          key: test-transparent-cache-with-proxy-${{ github.run_id }}-${{ github.run_attempt }}
+          key: test-proxy-cache-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Print cache save details
+      - name: Stop HTTP logger and extract data
         run: |
-          echo "Cache save operation completed with status: ${{ steps.cache-with-proxy.outcome }}"
-          echo "Cache key: test-transparent-cache-with-proxy-${{ github.run_id }}"
-          echo "Cache URL: $ACTIONS_RESULTS_URL"
+          if [ -f http-logger.pid ]; then
+            echo "Stopping HTTP logger process"
+            kill $(cat http-logger.pid) || true
+            sleep 2
+          else
+            echo "No HTTP logger process ID file found"
+          fi
           
-      - name: Stop mitmproxy and export data
-        run: |
-          if [ -f mitmproxy.pid ]; then
-            # List all files in the mitmproxy directory
-            echo "Mitmproxy directory contents:"
-            ls -la ~/.mitmproxy/
+          # Stop tcpdump if running
+          sudo pkill tcpdump || true
+          
+          # Check if logs were captured
+          if [ -f http_requests.log ]; then
+            echo "HTTP request log file exists"
+            ls -la http_requests.log
+          else
+            echo "No HTTP request log file found"
+          fi
+          
+          # Check if pcap file was captured
+          if [ -f cache_traffic.pcap ]; then
+            echo "tcpdump capture file exists"
+            ls -la cache_traffic.pcap
             
-            # Export flow data before killing if it exists
-            if [ -f ~/.mitmproxy/flows ]; then
-              echo "Copying flows file to cache_flows.flows"
-              cp ~/.mitmproxy/flows cache_flows.flows
-              
-              # Kill the proxy process
-              echo "Killing mitmproxy process"
-              sudo kill $(cat mitmproxy.pid) || true
-              
-              # Convert flows to a readable format
-              echo "Converting flows to readable format"
-              mitmdump -n -r cache_flows.flows --set flow_detail=3 -d > mitmproxy_dump.txt
-              
-              # Extract just the URLs and request details
-              echo "Extracting URLs and request details"
-              grep -E "GET|POST|PUT|DELETE" mitmproxy_dump.txt > http_requests.txt || echo "No requests found"
-              
-              # Create summary of hosts contacted
-              echo "Creating host summary"
-              grep -E "Host:" mitmproxy_dump.txt | sort | uniq -c | sort -nr > hosts_summary.txt || echo "No hosts found"
-              
-              # Extract request bodies
-              echo "Extracting request bodies"
-              grep -A 10 "Request Body" mitmproxy_dump.txt > request_bodies.txt || echo "No request bodies found"
-              
-              # Extract response bodies (might be large, so just getting headers)
-              echo "Extracting response headers"
-              grep -A 10 "Response Headers" mitmproxy_dump.txt > response_headers.txt || echo "No response headers found"
-            else
-              echo "No flows file found at ~/.mitmproxy/flows"
-              # Kill the proxy process anyway
-              echo "Killing mitmproxy process"
-              sudo kill $(cat mitmproxy.pid) || true
-            fi
+            # Extract readable data from pcap
+            sudo tcpdump -r cache_traffic.pcap -A | grep -A 10 -B 10 "Authorization:" > tcpdump_auth_headers.txt || true
+            sudo tcpdump -r cache_traffic.pcap -A | grep -A 10 -B 10 "Host:" > tcpdump_host_headers.txt || true
           else
-            echo "No mitmproxy process ID file found"
+            echo "No tcpdump capture file found"
           fi
-          
-          # Create a directory for all output files
-          mkdir -p mitmproxy_data
 
-            # Display all captured data files
-      - name: Display HTTP Requests
+      - name: Display HTTP request logs
         run: |
-          echo "=== HTTP Requests ==="
-          if [ -f http_requests.txt ]; then
-            cat http_requests.txt
+          echo "=== HTTP Request Logs ==="
+          if [ -f http_requests.log ]; then
+            cat http_requests.log
           else
-            echo "No HTTP requests file found"
-          fi
-      
-      - name: Display Hosts Summary
-        run: |
-          echo "=== Hosts Summary ==="
-          if [ -f hosts_summary.txt ]; then
-            cat hosts_summary.txt
-          else
-            echo "No hosts summary file found"
-          fi
-      
-      - name: Display Request Bodies
-        run: |
-          echo "=== Request Bodies ==="
-          if [ -f request_bodies.txt ]; then
-            cat request_bodies.txt
-          else
-            echo "No request bodies file found"
-          fi
-      
-      - name: Display Response Headers
-        run: |
-          echo "=== Response Headers ==="
-          if [ -f response_headers.txt ]; then
-            cat response_headers.txt
-          else
-            echo "No response headers file found"
+            echo "No HTTP request log file found"
           fi
           
-      - name: Display Full Mitmproxy Dump (first 1000 lines)
+      - name: Display tcpdump authentication headers
         run: |
-          echo "=== Mitmproxy Full Dump (first 1000 lines) ==="
-          if [ -f mitmproxy_dump.txt ]; then
-            head -n 1000 mitmproxy_dump.txt
+          echo "=== tcpdump Authentication Headers ==="
+          if [ -f tcpdump_auth_headers.txt ]; then
+            cat tcpdump_auth_headers.txt
           else
-            echo "No mitmproxy dump file found"
+            echo "No tcpdump authentication headers file found"
           fi
           
-      - name: Find JSON in requests
+      - name: Display tcpdump host headers
         run: |
-          echo "=== JSON Content in Requests ==="
-          if [ -f mitmproxy_dump.txt ]; then
-            grep -A 50 -B 5 '{"' mitmproxy_dump.txt || echo "No JSON content found"
+          echo "=== tcpdump Host Headers ==="
+          if [ -f tcpdump_host_headers.txt ]; then
+            cat tcpdump_host_headers.txt
           else
-            echo "No mitmproxy dump file found"
+            echo "No tcpdump host headers file found"
           fi
-      
-      # Use tmate directly without proxy
-      - name: Remove proxy environment variables
+          
+      # Try direct network inspection as a last resort
+      - name: Direct network inspection
         run: |
-          echo "http_proxy=" >> $GITHUB_ENV
-          echo "https_proxy=" >> $GITHUB_ENV
-          echo "HTTP_PROXY=" >> $GITHUB_ENV
-          echo "HTTPS_PROXY=" >> $GITHUB_ENV
-          echo "NODE_EXTRA_CA_CERTS=" >> $GITHUB_ENV
-          echo "Environment variables unset for next steps"
-      
-      - name: Setup tmate session without proxy
+          echo "Performing direct network inspection during cache operation..."
+          
+          # Start tcpdump in background
+          sudo tcpdump -i any -n port 80 or port 443 or port 9090 or port 9091 -w direct_cache_traffic.pcap &
+          TCPDUMP_PID=$!
+          sleep 2
+          
+          # Run curl to the cache URL to see what headers are sent
+          if [ -n "$ACTIONS_CACHE_URL" ]; then
+            echo "Testing connection to ACTIONS_CACHE_URL: $ACTIONS_CACHE_URL"
+            curl -v $ACTIONS_CACHE_URL || echo "Failed to connect to ACTIONS_CACHE_URL"
+          fi
+          
+          if [ -n "$ACTIONS_RESULTS_URL" ]; then
+            echo "Testing connection to ACTIONS_RESULTS_URL: $ACTIONS_RESULTS_URL"
+            curl -v $ACTIONS_RESULTS_URL || echo "Failed to connect to ACTIONS_RESULTS_URL"
+          fi
+          
+          sleep 5
+          
+          # Stop tcpdump
+          sudo kill $TCPDUMP_PID || true
+          
+          # Process the pcap file
+          if [ -f direct_cache_traffic.pcap ]; then
+            echo "Direct tcpdump capture file exists"
+            sudo tcpdump -r direct_cache_traffic.pcap -A > direct_network_inspection.txt
+            
+            echo "=== Direct Network Inspection Results ==="
+            cat direct_network_inspection.txt
+          else
+            echo "No direct tcpdump capture file found"
+          fi
+
+      - name: Setup tmate session
         uses: mxschmitt/action-tmate@v3
+        env:
+          ACTIONS_RUNTIME_TOKEN: ${{env.ACTIONS_RUNTIME_TOKEN}}
         with:
           detached: true
+```
