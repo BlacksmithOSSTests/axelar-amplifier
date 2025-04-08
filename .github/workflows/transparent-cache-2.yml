@@ -1,4 +1,4 @@
-name: Cache Inspection with Detailed Logging
+name: Cache Inspection - Github Runner
 
 on:
   pull_request:
