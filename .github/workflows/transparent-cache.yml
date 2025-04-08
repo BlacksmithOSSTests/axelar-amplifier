@@ -335,14 +335,20 @@ jobs:
           find /tmp -name "*.log" -type f -exec ls -la {} \; || echo "No Azure SDK log files found"
           find /tmp -name "*azure*.log" -type f -exec cat {} \; || echo "No Azure SDK log content found"
 
-      - name: Upload debug artifacts
-        uses: actions/upload-artifact@v3
-        with:
-          name: cache-debug-artifacts
-          path: |
-            debug/
-            storage_api_detailed.log
-          if-no-files-found: warn
+      - name: Save debug logs to file system
+        run: |
+          # Create a directory for all logs
+          mkdir -p /tmp/debug-logs
+          
+          # Copy all important logs
+          cp -r debug/* /tmp/debug-logs/ || true
+          cp storage_api_detailed.log /tmp/debug-logs/ || true
+          
+          # Archive logs
+          tar -czvf /tmp/cache-debug-logs.tar.gz /tmp/debug-logs
+          
+          echo "Debug logs saved to /tmp/cache-debug-logs.tar.gz"
+          ls -la /tmp/cache-debug-logs.tar.gz
 
       - name: Examine cache internal implementation
         run: |
@@ -363,6 +369,30 @@ jobs:
           
           # Try to extract the StorageSharedKeyCredential implementation
           find /home/runner -path "*/node_modules/@azure/storage-blob" -type f -name "*.js" | xargs grep -l "StorageSharedKeyCredential" 2>/dev/null | head -1 | xargs cat 2>/dev/null || echo "No credential implementation found"
+
+      - name: Cat Storage Logs
+        run: |
+          # Print out key log files
+          echo "=== Storage API Detailed Log ==="
+          if [ -f storage_api_detailed.log ]; then
+            cat storage_api_detailed.log
+          else
+            echo "No storage API log found"
+          fi
+          
+          echo "=== HTTP Summary CSV ==="
+          if [ -f debug/http_summary.csv ]; then
+            cat debug/http_summary.csv
+          else
+            echo "No HTTP summary found"
+          fi
+          
+          echo "=== HTTP Transactions CSV ==="
+          if [ -f debug/http_transactions.csv ]; then
+            cat debug/http_transactions.csv
+          else
+            echo "No HTTP transactions found"
+          fi
 
       - name: Setup tmate session for manual inspection
         if: always()
