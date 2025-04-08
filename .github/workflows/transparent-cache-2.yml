@@ -35,8 +35,11 @@ jobs:
           
       - name: Create test file
         run: |
-          echo "Hello from cache test" > test.txt
-          cat test.txt
+          # Create a 300MB test file named test.txt
+          dd if=/dev/zero of=test.txt bs=1M count=300
+          
+          # Show file size
+          ls -lh test.txt
           
       # Add your existing debug steps here...
       
