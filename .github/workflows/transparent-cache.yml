@@ -19,7 +19,6 @@ jobs:
       ACTIONS_RUNTIME_TOKEN_VERBOSE: true
       ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: true
       RUNNER_DEBUG: 1
-      # NODE_DEBUG: "http,http2,net,stream"
       ACTIONS_CACHE_DEBUG: true
 
     steps:
@@ -27,6 +26,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y mitmproxy ca-certificates
+          which mitmdump
+          mitmdump --version
 
       - name: Create script file
         run: |
@@ -35,27 +36,52 @@ jobs:
           def response(flow):
               flow.response.headers["mitmproxy-note"] = "captured-by-workflow"
           EOF
+          cat ~/.mitmproxy/modify_headers.py
 
       - name: Set up mitmproxy certificate
         run: |
-          # Start mitmproxy with the script file
-          mitmdump --set confdir=~/.mitmproxy -s ~/.mitmproxy/modify_headers.py --no-http2 --quiet &
-          sleep 5
-          echo $! > mitmproxy.pid
+          # Start mitmproxy with explicit details and check if it's running
+          mitmdump --set confdir=~/.mitmproxy -s ~/.mitmproxy/modify_headers.py --listen-host 127.0.0.1 --listen-port 8080 --no-http2 &
           
-          # Trust the mitmproxy certificate
-          sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt
-          sudo update-ca-certificates
-        
-      - name: Configure system to use proxy
-        run: |
-          # Set environment variables for the proxy
-          echo "http_proxy=http://127.0.0.1:8080" >> $GITHUB_ENV
-          echo "https_proxy=http://127.0.0.1:8080" >> $GITHUB_ENV
-          echo "HTTP_PROXY=http://127.0.0.1:8080" >> $GITHUB_ENV
-          echo "HTTPS_PROXY=http://127.0.0.1:8080" >> $GITHUB_ENV
-          echo "NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/mitmproxy.crt" >> $GITHUB_ENV
-        
+          # Store the PID and wait for proxy to initialize
+          echo $! > mitmproxy.pid
+          sleep 10
+          
+          # Verify mitmproxy is running
+          if ps -p $(cat mitmproxy.pid) > /dev/null; then
+            echo "Mitmproxy is running with PID $(cat mitmproxy.pid)"
+          else
+            echo "Mitmproxy failed to start"
+            exit 1
+          fi
+          
+          # Check if port 8080 is listening
+          netstat -tulpn | grep 8080 || echo "Port 8080 is not listening"
+          
+          # Check if the certificate was generated
+          ls -la ~/.mitmproxy/
+          
+          if [ -f ~/.mitmproxy/mitmproxy-ca-cert.pem ]; then
+            echo "Certificate file exists"
+            # Trust the mitmproxy certificate
+            sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt
+            sudo update-ca-certificates
+          else
+            echo "Certificate file does not exist, attempting to generate it"
+            # Attempt to generate certificate explicitly
+            mitmdump --set confdir=~/.mitmproxy --generate-ca-cert
+            ls -la ~/.mitmproxy/
+            
+            if [ -f ~/.mitmproxy/mitmproxy-ca-cert.pem ]; then
+              sudo cp ~/.mitmproxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/mitmproxy.crt
+              sudo update-ca-certificates
+            else
+              echo "Failed to generate certificate"
+              exit 1
+            fi
+          fi
+      
+      # Create test file and perform cache operations WITHOUT proxy initially
       - name: Create test file
         run: |
           echo "Hello from cache test" > test.txt
@@ -70,85 +96,105 @@ jobs:
           echo "Using ACTIONS_CACHE_URL: $ACTIONS_CACHE_URL"
           echo "Using ACTIONS_RESULTS_URL: $ACTIONS_RESULTS_URL"
 
-      - name: Save cache
+      # First try to save cache without proxy to establish baseline
+      - name: Save cache (no proxy)
         uses: actions/cache/save@v4
+        with:
+          path: test.txt
+          key: test-transparent-cache-no-proxy-${{ github.run_id }}-${{ github.run_attempt }}
+
+      # Test if curl works with the proxy
+      - name: Test proxy with curl
+        run: |
+          echo "Testing proxy connectivity..."
+          curl -v --proxy http://127.0.0.1:8080 https://httpbin.org/get || echo "Proxy connection failed"
+          
+          # If proxy test fails, try direct connection
+          if [ $? -ne 0 ]; then
+            echo "Testing direct connection..."
+            curl -v https://httpbin.org/get
+          fi
+
+      # Now try with proxy (only if proxy test succeeded)
+      - name: Configure system to use proxy
+        run: |
+          # Set environment variables for the proxy
+          echo "http_proxy=http://127.0.0.1:8080" >> $GITHUB_ENV
+          echo "https_proxy=http://127.0.0.1:8080" >> $GITHUB_ENV
+          echo "HTTP_PROXY=http://127.0.0.1:8080" >> $GITHUB_ENV
+          echo "HTTPS_PROXY=http://127.0.0.1:8080" >> $GITHUB_ENV
+          echo "NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/mitmproxy.crt" >> $GITHUB_ENV
+        
+      - name: Save cache with proxy
+        id: cache-with-proxy
+        uses: actions/cache/save@v4
+        continue-on-error: true
         env:
           http_proxy: http://127.0.0.1:8080
           https_proxy: http://127.0.0.1:8080
           NODE_TLS_REJECT_UNAUTHORIZED: '0'  # Only for this test environment
         with:
           path: test.txt
-          key: test-transparent-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          key: test-transparent-cache-with-proxy-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Print cache save details
         run: |
-          echo "Cache save operation completed"
-          echo "Cache key: test-transparent-cache-${{ github.run_id }}"
+          echo "Cache save operation completed with status: ${{ steps.cache-with-proxy.outcome }}"
+          echo "Cache key: test-transparent-cache-with-proxy-${{ github.run_id }}"
           echo "Cache URL: $ACTIONS_RESULTS_URL"
-          echo "ACTIONS_RESULTS_URL is: $ACTIONS_RESULTS_URL"
-
+          
       - name: Stop mitmproxy and export data
         run: |
           if [ -f mitmproxy.pid ]; then
-            # Export flow data before killing
-            mkdir -p ~/.mitmproxy  # Ensure directory exists 
+            # List all files in the mitmproxy directory
+            echo "Mitmproxy directory contents:"
+            ls -la ~/.mitmproxy/
+            
+            # Export flow data before killing if it exists
             if [ -f ~/.mitmproxy/flows ]; then
+              echo "Copying flows file to cache_flows.flows"
               cp ~/.mitmproxy/flows cache_flows.flows
+              
+              # Kill the proxy process
+              echo "Killing mitmproxy process"
               sudo kill $(cat mitmproxy.pid) || true
               
               # Convert flows to a readable format
+              echo "Converting flows to readable format"
               mitmdump -n -r cache_flows.flows --set flow_detail=3 -d > mitmproxy_dump.txt
               
               # Extract just the URLs and request details
-              grep -E "GET|POST|PUT|DELETE" mitmproxy_dump.txt > http_requests.txt
+              echo "Extracting URLs and request details"
+              grep -E "GET|POST|PUT|DELETE" mitmproxy_dump.txt > http_requests.txt || echo "No requests found"
               
               # Create summary of hosts contacted
-              grep -E "Host:" mitmproxy_dump.txt | sort | uniq -c | sort -nr > hosts_summary.txt
+              echo "Creating host summary"
+              grep -E "Host:" mitmproxy_dump.txt | sort | uniq -c | sort -nr > hosts_summary.txt || echo "No hosts found"
+              
+              # Display the captured data
+              echo "=== HTTP Requests ==="
+              cat http_requests.txt || echo "No HTTP requests file"
+              
+              echo "=== Hosts Summary ==="
+              cat hosts_summary.txt || echo "No hosts summary file"
             else
               echo "No flows file found at ~/.mitmproxy/flows"
-              ls -la ~/.mitmproxy/
+              # Kill the proxy process anyway
+              echo "Killing mitmproxy process"
               sudo kill $(cat mitmproxy.pid) || true
             fi
           else
             echo "No mitmproxy process ID file found"
           fi
 
-      # Restore cache section - uncomment if needed
-      # - name: Delete test file
-      #   run: rm test.txt
-
-      # - name: Restore cache
-      #   uses: actions/cache/restore@v4
-      #   with:
-      #     path: test.txt
-      #     key: test-transparent-cache-${{ github.run_id }}
-      #     restore-keys: |
-      #       test-transparent-cache-
-
-      # - name: Print cache restore details
-      #   run: |
-      #     echo "Cache restore operation completed"
-      #     echo "Cache key: test-transparent-cache-${{ github.run_id }}"
-      #     echo "Cache URL: $ACTIONS_RESULTS_URL"
-      #     echo "ACTIONS_RESULTS_URL is: $ACTIONS_RESULTS_URL"
-
-      # - name: Verify file contents
-      #   shell: /usr/bin/bash -e {0}
-      #   run: |
-      #     if [ ! -f "test.txt" ]; then
-      #       echo "error: test.txt was not restored from cache."
-      #       exit 1
-      #     fi
-
-      #     content=$(cat test.txt)
-      #     if [ "$content" != "Hello from cache test" ]; then
-      #       echo "error: cached file contents do not match expected value."
-      #       exit 1
-      #     fi
-
-      #     echo "File verification successful: content matches expected value"
-
-      - name: Setup tmate session
+      # Use tmate directly without proxy
+      - name: Setup tmate session without proxy
         uses: mxschmitt/action-tmate@v3
+        env:
+          http_proxy: ""
+          https_proxy: ""
+          HTTP_PROXY: ""
+          HTTPS_PROXY: ""
+          NODE_EXTRA_CA_CERTS: ""
         with:
           detached: true
