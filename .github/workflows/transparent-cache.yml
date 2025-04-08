@@ -1,4 +1,4 @@
-name: Cache Direct Inspection
+name: Cache Metadata Debug Analysis
 
 on:
   pull_request:
@@ -10,9 +10,9 @@ permissions:
   pull-requests: write
 
 jobs:
-  test-cache:
-    name: test-cache-inspection
-    runs-on: ubuntu-latest
+  test-cache-debug:
+    name: cache-metadata-analysis
+    runs-on: blacksmith-staging  # Using blacksmith for direct MinIO access
     env:
       ACTIONS_STEP_DEBUG: true
       ACTIONS_RUNNER_DEBUG: true
@@ -20,228 +20,352 @@ jobs:
       ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: true
       RUNNER_DEBUG: 1
       ACTIONS_CACHE_DEBUG: true
+      # Enable Azure SDK debugging
+      AZURE_LOG_LEVEL: verbose
+      NODE_DEBUG: "http,https,net,stream,azure"
 
     steps:
-      - name: Install network tools
+      - name: Install debugging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y tcpdump curl jq
+          sudo apt-get install -y tcpdump curl jq nodejs npm tshark wireshark
 
       - name: Create test file
         run: |
           echo "Hello from cache test" > test.txt
           cat test.txt
 
+      - name: Setup debugging proxy
+        run: |
+          mkdir -p debug
+          
+          # Create a proxy script that logs detailed request/response data
+          cat > debug/proxy.js << 'EOF'
+          const http = require('http');
+          const https = require('https');
+          const fs = require('fs');
+          const zlib = require('zlib');
+          const { URL } = require('url');
+          
+          // Log everything to a file
+          const logFile = fs.createWriteStream('storage_api_detailed.log', {flags: 'a'});
+          
+          function logMessage(message) {
+            console.log(message);
+            logFile.write(message + '\n');
+          }
+          
+          // Determine if content is binary and should be base64 encoded
+          function shouldEncode(headers, body) {
+            if (!body || body.length === 0) return false;
+            
+            const contentType = headers['content-type'] || '';
+            if (contentType.includes('json') || 
+                contentType.includes('text') ||
+                contentType.includes('xml')) {
+              return false;
+            }
+            
+            // Try to detect if it's text
+            try {
+              const decoded = body.toString('utf8');
+              // If it contains a lot of unprintable characters, it's probably binary
+              const unprintable = (decoded.match(/[^\x20-\x7E]/g) || []).length;
+              return unprintable > body.length * 0.1; // 10% threshold
+            } catch (e) {
+              return true;
+            }
+          }
+          
+          const proxy = http.createServer((req, res) => {
+            // Get full URL being requested
+            const fullUrl = `http://${req.headers.host}${req.url}`;
+            logMessage(`\n\n=== REQUEST ${new Date().toISOString()} ===`);
+            logMessage(`${req.method} ${fullUrl}`);
+            logMessage(`Headers: ${JSON.stringify(req.headers, null, 2)}`);
+            
+            let reqBody = Buffer.from('');
+            req.on('data', (chunk) => {
+              reqBody = Buffer.concat([reqBody, chunk]);
+            });
+            
+            req.on('end', () => {
+              if (reqBody.length > 0) {
+                if (shouldEncode(req.headers, reqBody)) {
+                  logMessage(`Binary Body (Base64): ${reqBody.toString('base64').substring(0, 1000)}${reqBody.length > 1000 ? '...' : ''}`);
+                } else {
+                  logMessage(`Body: ${reqBody.toString('utf8').substring(0, 4000)}${reqBody.length > 4000 ? '...' : ''}`);
+                }
+              }
+              
+              // Parse target URL
+              let targetUrl;
+              try {
+                // Handle both absolute URLs and relative paths
+                if (req.url.startsWith('http')) {
+                  targetUrl = new URL(req.url);
+                } else {
+                  targetUrl = new URL(`http://${req.headers.host}${req.url}`);
+                }
+              } catch (e) {
+                logMessage(`Error parsing URL: ${e.message}`);
+                res.writeHead(500);
+                res.end('Invalid URL');
+                return;
+              }
+              
+              // Prepare headers for proxied request
+              const options = {
+                method: req.method,
+                headers: {...req.headers},
+                timeout: 30000,
+              };
+              
+              // Remove proxy-specific headers
+              delete options.headers['proxy-connection'];
+              
+              // Create request to target
+              const protocol = targetUrl.protocol === 'https:' ? https : http;
+              const proxyReq = protocol.request(targetUrl, options, (proxyRes) => {
+                logMessage(`\n=== RESPONSE ${new Date().toISOString()} ===`);
+                logMessage(`Status: ${proxyRes.statusCode} ${proxyRes.statusMessage}`);
+                logMessage(`Headers: ${JSON.stringify(proxyRes.headers, null, 2)}`);
+                
+                // Set response headers
+                res.writeHead(proxyRes.statusCode, proxyRes.headers);
+                
+                let resBody = Buffer.from('');
+                proxyRes.on('data', (chunk) => {
+                  resBody = Buffer.concat([resBody, chunk]);
+                  res.write(chunk);
+                });
+                
+                proxyRes.on('end', () => {
+                  if (resBody.length > 0) {
+                    // Check if response is gzipped
+                    if (proxyRes.headers['content-encoding'] === 'gzip') {
+                      try {
+                        const decompressed = zlib.gunzipSync(resBody);
+                        if (shouldEncode(proxyRes.headers, decompressed)) {
+                          logMessage(`Binary Body (Base64, Decompressed): ${decompressed.toString('base64').substring(0, 1000)}${decompressed.length > 1000 ? '...' : ''}`);
+                        } else {
+                          logMessage(`Body (Decompressed): ${decompressed.toString('utf8').substring(0, 4000)}${decompressed.length > 4000 ? '...' : ''}`);
+                        }
+                      } catch (e) {
+                        logMessage(`Error decompressing gzipped content: ${e.message}`);
+                        if (shouldEncode(proxyRes.headers, resBody)) {
+                          logMessage(`Binary Body (Base64): ${resBody.toString('base64').substring(0, 1000)}${resBody.length > 1000 ? '...' : ''}`);
+                        } else {
+                          logMessage(`Body: ${resBody.toString('utf8').substring(0, 4000)}${resBody.length > 4000 ? '...' : ''}`);
+                        }
+                      }
+                    } else {
+                      if (shouldEncode(proxyRes.headers, resBody)) {
+                        logMessage(`Binary Body (Base64): ${resBody.toString('base64').substring(0, 1000)}${resBody.length > 1000 ? '...' : ''}`);
+                      } else {
+                        logMessage(`Body: ${resBody.toString('utf8').substring(0, 4000)}${resBody.length > 4000 ? '...' : ''}`);
+                      }
+                    }
+                  }
+                  res.end();
+                });
+              });
+              
+              proxyReq.on('error', (error) => {
+                logMessage(`Proxy error: ${error.message}`);
+                res.writeHead(502);
+                res.end(`Proxy error: ${error.message}`);
+              });
+              
+              if (reqBody.length > 0) {
+                proxyReq.write(reqBody);
+              }
+              
+              proxyReq.end();
+            });
+          });
+          
+          // Start the proxy server
+          const port = 8888;
+          proxy.listen(port, () => {
+            logMessage(`Proxy server running on port ${port}`);
+          });
+          
+          // Keep the script running
+          process.stdin.resume();
+          EOF
+          
+          # Start the proxy in the background
+          node debug/proxy.js &
+          echo $! > debug/proxy.pid
+          sleep 3
+          
+          # Verify the proxy is running
+          if ps -p $(cat debug/proxy.pid) > /dev/null; then
+            echo "Debug proxy is running on port 8888"
+          else
+            echo "Failed to start debug proxy"
+            exit 1
+          fi
+
+      - name: Start detailed packet capture
+        run: |
+          # Start tcpdump to capture full packet data
+          sudo tcpdump -i any -s 0 -w debug/full_cache_traffic.pcap '(port 9000 or port 8888 or port 443)' &
+          echo $! > debug/tcpdump.pid
+          
+          # Also start tshark for real-time analysis in a more structured format
+          sudo tshark -i any -f '(port 9000 or port 8888 or port 443)' -T fields -e frame.time -e ip.src -e ip.dst -e tcp.srcport -e tcp.dstport -e http.request.method -e http.request.uri -e http.response.code -E header=y -E separator=, > debug/http_transactions.csv &
+          echo $! > debug/tshark.pid
+          
+          sleep 2
+          echo "Packet capture started"
+
       - name: Debug cache environment variables
         run: |
           echo "=== Cache Environment Variables ==="
-          echo "BLACKSMITH_CACHE_URL: $BLACKSMITH_CACHE_URL"
-          echo "BLACKSMITH_CACHE_TOKEN: ${BLACKSMITH_CACHE_TOKEN:0:5}... (truncated)"
-          echo "ACTIONS_RUNTIME_TOKEN: ${ACTIONS_RUNTIME_TOKEN:0:5}... (truncated)"
-          echo "ACTIONS_CACHE_URL: $ACTIONS_CACHE_URL"
-          echo "ACTIONS_RESULTS_URL: $ACTIONS_RESULTS_URL"
+          env | grep -i "cache" || echo "No cache environment variables found"
+          env | grep -i "action" | grep -v "secret" || echo "No action environment variables found"
           
-          # Log environment variables to a file
-          env | sort > environment_variables.txt
-          
-          # Extract all variables with "TOKEN" in their name (masking content)
-          echo "=== TOKEN Variables (truncated for security) ==="
-          env | grep -i "token" | sed 's/\(.*TOKEN.*=\).*/\1****/' >> token_variables.txt
-          cat token_variables.txt
-          
-          echo "=== All Variables With URL ==="
-          env | grep -i "url" >> url_variables.txt
-          cat url_variables.txt
-
-      - name: Dump network stack
-        run: |
           echo "=== Network Configuration ==="
           ip addr
-          echo "=== Routing Table ==="
-          ip route
+          echo "=== DNS Configuration ==="
+          cat /etc/resolv.conf
           echo "=== Hosts File ==="
           cat /etc/hosts
-          echo "=== Resolv Configuration ==="
-          cat /etc/resolv.conf
-          
-      - name: Start network capture for cache operation
-        run: |
-          echo "Starting tcpdump capture..."
-          sudo tcpdump -i any -n -s0 -w cache_traffic.pcap &
-          echo $! > tcpdump.pid
-          echo "tcpdump started with PID $(cat tcpdump.pid)"
-          sleep 2
 
-      - name: Save cache with debug
-        id: cache-save
-        run: |
-          # Create a script to wrap the cache save operation with debugging
-          cat > cache_save_wrapper.sh << 'EOF'
-          #!/bin/bash
-          set -x  # Enable command tracing
-          
-          # Record start time
-          date > cache_operation_start.txt
-          
-          # Run strace on the Node.js actions/cache save operation
-          ACTION_OUTPUT=$(strace -f -e trace=network -o cache_network_strace.log \
-            node -e "
-              const fs = require('fs');
-              const path = require('path');
-              const { execSync } = require('child_process');
-              
-              // Log Node.js environment
-              console.log('Node version:', process.version);
-              console.log('NODE_EXTRA_CA_CERTS:', process.env.NODE_EXTRA_CA_CERTS);
-              
-              // Attempt to save to cache using GitHub CLI
-              try {
-                // Use the GitHub CLI to save the cache
-                const cacheKey = 'test-cache-inspection-${{ github.run_id }}';
-                const command = \`gh actions-cache save test.txt --key \${cacheKey}\`;
-                console.log('Running command:', command);
-                const output = execSync(command, { encoding: 'utf8' });
-                console.log('Cache save output:', output);
-                fs.writeFileSync('cache_cli_output.txt', output);
-              } catch (error) {
-                console.error('Error saving cache:', error.message);
-                fs.writeFileSync('cache_error.txt', error.message);
-              }
-            "
-          )
-          
-          # Record end time
-          date > cache_operation_end.txt
-          
-          # Output the results
-          echo "Action output: $ACTION_OUTPUT"
-          EOF
-          
-          chmod +x cache_save_wrapper.sh
-          ./cache_save_wrapper.sh
-
-      - name: Try native cache action
-        id: cache-action-save
+      # First try standard cache operation
+      - name: Try native cache save (with debugging)
+        id: cache-normal
+        continue-on-error: true
+        env:
+          NODE_DEBUG: http,https,net,stream,azure
+          AZURE_LOG_LEVEL: verbose
         uses: actions/cache/save@v4
         with:
           path: test.txt
-          key: test-cache-inspection-${{ github.run_id }}-native
+          key: test-cache-debug-${{ github.run_id }}-1
 
-      - name: Stop network capture
+      # Now try with HTTP proxy
+      - name: Set up proxy environment
         run: |
-          if [ -f tcpdump.pid ]; then
-            echo "Stopping tcpdump with PID $(cat tcpdump.pid)"
-            sudo kill $(cat tcpdump.pid) || true
-            sleep 2
-          fi
+          echo "http_proxy=http://127.0.0.1:8888" >> $GITHUB_ENV
+          echo "https_proxy=http://127.0.0.1:8888" >> $GITHUB_ENV
+          echo "HTTP_PROXY=http://127.0.0.1:8888" >> $GITHUB_ENV
+          echo "HTTPS_PROXY=http://127.0.0.1:8888" >> $GITHUB_ENV
+          echo "NODE_TLS_REJECT_UNAUTHORIZED=0" >> $GITHUB_ENV
           
-          # Process tcpdump output
-          if [ -f cache_traffic.pcap ]; then
-            echo "Processing network capture..."
-            
-            # Extract HTTP requests
-            sudo tcpdump -r cache_traffic.pcap -A | grep -A 2 -B 2 "HTTP/" > http_requests.txt || true
-            
-            # Look for authentication headers
-            sudo tcpdump -r cache_traffic.pcap -A | grep -A 2 -B 2 "Authorization:" > auth_headers.txt || true
-            
-            # Look for JSON payloads
-            sudo tcpdump -r cache_traffic.pcap -A | grep -A 10 -B 2 '{"' > json_payloads.txt || true
-            
-            # Look for connections to blacksmith
-            sudo tcpdump -r cache_traffic.pcap -A | grep -A 5 -B 5 "blacksmith" > blacksmith_connections.txt || true
-            
-            # Create a summary of all connections
-            sudo tcpdump -r cache_traffic.pcap -n | grep -E "IP .* > .*:" | sort | uniq -c | sort -nr > connection_summary.txt || true
-          else
-            echo "No tcpdump capture file found"
-          fi
+          # Verify proxy settings
+          echo "Proxy settings:"
+          env | grep -i "proxy"
 
-      - name: Display network inspection results
+      - name: Try cache save with debugging proxy
+        id: cache-with-proxy
+        continue-on-error: true
+        env:
+          NODE_DEBUG: http,https,net,stream,azure
+          AZURE_LOG_LEVEL: verbose
+        uses: actions/cache/save@v4
+        with:
+          path: test.txt
+          key: test-cache-debug-${{ github.run_id }}-2
+
+      - name: Stop debugging services
         run: |
-          echo "=== HTTP Requests ==="
-          if [ -f http_requests.txt ]; then
-            cat http_requests.txt
-          else
-            echo "No HTTP requests found"
+          # Stop tcpdump
+          if [ -f debug/tcpdump.pid ]; then
+            sudo kill $(cat debug/tcpdump.pid) || true
           fi
           
-          echo "=== Authentication Headers (redacted) ==="
-          if [ -f auth_headers.txt ]; then
-            # Redact actual token values for security
-            cat auth_headers.txt | sed 's/\(Authorization: Bearer\) .*/\1 [REDACTED]/g' | 
-              sed 's/\(Authorization: Basic\) .*/\1 [REDACTED]/g' |
-              sed 's/\(token=\)[^&]*/\1[REDACTED]/g'
-          else
-            echo "No authentication headers found"
+          # Stop tshark
+          if [ -f debug/tshark.pid ]; then
+            sudo kill $(cat debug/tshark.pid) || true
           fi
           
-          echo "=== JSON Payloads ==="
-          if [ -f json_payloads.txt ]; then
-            cat json_payloads.txt
-          else
-            echo "No JSON payloads found"
+          # Stop proxy
+          if [ -f debug/proxy.pid ]; then
+            kill $(cat debug/proxy.pid) || true
           fi
           
-          echo "=== Blacksmith Connections ==="
-          if [ -f blacksmith_connections.txt ]; then
-            cat blacksmith_connections.txt
-          else
-            echo "No Blacksmith connections found"
-          fi
-          
-          echo "=== Connection Summary ==="
-          if [ -f connection_summary.txt ]; then
-            cat connection_summary.txt
-          else
-            echo "No connection summary found"
-          fi
-          
-          echo "=== Network Strace Log ==="
-          if [ -f cache_network_strace.log ]; then
-            cat cache_network_strace.log
-          else
-            echo "No network strace log found"
-          fi
-          
-          echo "=== Cache CLI Output ==="
-          if [ -f cache_cli_output.txt ]; then
-            cat cache_cli_output.txt
-          else
-            echo "No cache CLI output found"
-          fi
-          
-          echo "=== Cache Error ==="
-          if [ -f cache_error.txt ]; then
-            cat cache_error.txt
-          else
-            echo "No cache error found"
-          fi
+          sleep 2
+          echo "Debugging services stopped"
 
-      - name: Debug internal files
+      - name: Analyze packet capture
         run: |
-          echo "=== Looking for GitHub Actions cache related files ==="
+          # Convert pcap to text format with http headers
+          echo "Converting pcap to readable format..."
+          sudo tshark -r debug/full_cache_traffic.pcap -Y "http" -T fields -e frame.number -e frame.time -e ip.src -e ip.dst -e http.request.method -e http.request.uri -e http.response.code -e http.response.phrase -E header=y -E separator=, > debug/http_summary.csv
           
-          echo "Searching for cache files in runner directory:"
-          find /home/runner -name "*cache*" -type f 2>/dev/null || echo "No cache files found"
+          # Extract HTTP headers
+          echo "Extracting HTTP headers..."
+          sudo tshark -r debug/full_cache_traffic.pcap -Y "http.request or http.response" -T fields -e frame.number -e http.request.method -e http.request.uri -e http.request.version -e http.response.code -e http.response.phrase -e http.file_data -E header=y > debug/http_content.txt
           
-          echo "Searching for Actions toolkit files:"
-          find /home/runner -name "*.js" -path "*/actions/toolkit/*" -type f 2>/dev/null || echo "No toolkit files found"
+          # Extract all HTTP headers
+          sudo tshark -r debug/full_cache_traffic.pcap -Y "http.request or http.response" -T fields -e frame.number -e http.request_in -e http.response_in -e http.request.line -e http.response.line -e http.request.full_uri -e http.file_data -e text > debug/http_full.txt
           
-          echo "Examining Node.js modules related to caching:"
-          ls -la /home/runner/work/_actions/actions/cache/ 2>/dev/null || echo "Cache action directory not found"
+          # Extract all requests to MinIO
+          sudo tshark -r debug/full_cache_traffic.pcap -Y "tcp.port == 9000" -T pdml > debug/minio_traffic.xml
           
-          # Try to find the cache implementation file
-          CACHE_FILE=$(find /home/runner -name "cache-save.js" -type f 2>/dev/null | head -1)
-          if [[ -n "$CACHE_FILE" ]]; then
-            echo "Found cache implementation at: $CACHE_FILE"
-            echo "First 50 lines of cache implementation:"
-            head -n 50 "$CACHE_FILE"
-          else
-            echo "No cache implementation file found"
-          fi
+          # Count HTTP requests and responses
+          echo "=== HTTP Statistics ==="
+          echo "Total HTTP Requests: $(grep -c "GET\|POST\|PUT\|DELETE" debug/http_summary.csv)"
+          echo "Total HTTP Responses: $(grep -c "HTTP/1" debug/http_content.txt)"
+          
+          # Look for storage-related URLs
+          echo "=== Storage-Related URLs ==="
+          grep -i "minio\|blob\|storage\|cache" debug/http_summary.csv || echo "No storage URLs found"
 
-      - name: Setup tmate session
+      - name: Display detailed logs
+        run: |
+          echo "=== Proxy Log Excerpts ==="
+          if [ -f storage_api_detailed.log ]; then
+            grep -A 10 "Headers:" storage_api_detailed.log | head -n 200
+          else
+            echo "No proxy log file found"
+          fi
+          
+          echo "=== HTTP Transactions Summary ==="
+          if [ -f debug/http_summary.csv ]; then
+            head -n 50 debug/http_summary.csv
+          else
+            echo "No HTTP summary file found"
+          fi
+          
+          echo "=== Azure Debug Log Output ==="
+          find /tmp -name "*.log" -type f -exec ls -la {} \; || echo "No Azure SDK log files found"
+          find /tmp -name "*azure*.log" -type f -exec cat {} \; || echo "No Azure SDK log content found"
+
+      - name: Upload debug artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: cache-debug-artifacts
+          path: |
+            debug/
+            storage_api_detailed.log
+          if-no-files-found: warn
+
+      - name: Examine cache internal implementation
+        run: |
+          echo "Looking for cache implementation files..."
+          
+          # Find the Actions toolkit cache-related JavaScript files
+          find /home/runner -path "*/actions/toolkit/packages/cache" -type d | xargs ls -la 2>/dev/null || echo "No cache toolkit files found"
+          
+          # Look for the specific save handler
+          find /home/runner -name "*cache*.js" -type f | xargs grep -l "uploadCacheEntry" 2>/dev/null | head -5 | xargs cat 2>/dev/null || echo "No cache implementation files found"
+          
+          # Try to find the file causing the error
+          find /home/runner -type f -name "*.js" | xargs grep -l "uploadCacheArchiveSDK" 2>/dev/null | head -5 | xargs cat 2>/dev/null || echo "No error-related files found"
+          
+          # Look for the SDK implementation
+          echo "=== Azure Storage SDK Files ==="
+          find /home/runner -path "*/node_modules/@azure/storage-blob" -type d | head -1 | xargs ls -la 2>/dev/null || echo "No Azure Storage SDK files found"
+          
+          # Try to extract the StorageSharedKeyCredential implementation
+          find /home/runner -path "*/node_modules/@azure/storage-blob" -type f -name "*.js" | xargs grep -l "StorageSharedKeyCredential" 2>/dev/null | head -1 | xargs cat 2>/dev/null || echo "No credential implementation found"
+
+      - name: Setup tmate session for manual inspection
+        if: always()
         uses: mxschmitt/action-tmate@v3
         with:
           detached: true
