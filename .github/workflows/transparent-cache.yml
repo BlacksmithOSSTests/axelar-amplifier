@@ -28,14 +28,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y mitmproxy ca-certificates
 
-      - name: Set up mitmproxy certificate
+      - name: Create script file
         run: |
           mkdir -p ~/.mitmproxy
-          mitmdump --set confdir=~/.mitmproxy -s "$(cat <<'EOF'
+          cat > ~/.mitmproxy/modify_headers.py << 'EOF'
           def response(flow):
               flow.response.headers["mitmproxy-note"] = "captured-by-workflow"
           EOF
-          )" --no-http2 --quiet & 
+
+      - name: Set up mitmproxy certificate
+        run: |
+          # Start mitmproxy with the script file
+          mitmdump --set confdir=~/.mitmproxy -s ~/.mitmproxy/modify_headers.py --no-http2 --quiet &
           sleep 5
           echo $! > mitmproxy.pid
           
@@ -87,19 +91,29 @@ jobs:
         run: |
           if [ -f mitmproxy.pid ]; then
             # Export flow data before killing
-            cp ~/.mitmproxy/flows cache_flows.flows
-            sudo kill $(cat mitmproxy.pid) || true
+            mkdir -p ~/.mitmproxy  # Ensure directory exists 
+            if [ -f ~/.mitmproxy/flows ]; then
+              cp ~/.mitmproxy/flows cache_flows.flows
+              sudo kill $(cat mitmproxy.pid) || true
+              
+              # Convert flows to a readable format
+              mitmdump -n -r cache_flows.flows --set flow_detail=3 -d > mitmproxy_dump.txt
+              
+              # Extract just the URLs and request details
+              grep -E "GET|POST|PUT|DELETE" mitmproxy_dump.txt > http_requests.txt
+              
+              # Create summary of hosts contacted
+              grep -E "Host:" mitmproxy_dump.txt | sort | uniq -c | sort -nr > hosts_summary.txt
+            else
+              echo "No flows file found at ~/.mitmproxy/flows"
+              ls -la ~/.mitmproxy/
+              sudo kill $(cat mitmproxy.pid) || true
+            fi
+          else
+            echo "No mitmproxy process ID file found"
           fi
-          
-          # Convert flows to a readable format
-          mitmdump -n -r cache_flows.flows --set flow_detail=3 -d > mitmproxy_dump.txt
-          
-          # Extract just the URLs and request details
-          grep -E "GET|POST|PUT|DELETE" mitmproxy_dump.txt > http_requests.txt
-          
-          # Create summary of hosts contacted
-          grep -E "Host:" mitmproxy_dump.txt | sort | uniq -c | sort -nr > hosts_summary.txt
 
+      # Restore cache section - uncomment if needed
       # - name: Delete test file
       #   run: rm test.txt
 
