@@ -151,7 +151,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: test.txt
-          key: test-cache-inspection-native-enhanced
+          key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
           
       # Add your network capture analysis steps here...
       
