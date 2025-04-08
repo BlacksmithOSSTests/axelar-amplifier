@@ -171,12 +171,13 @@ jobs:
               echo "Creating host summary"
               grep -E "Host:" mitmproxy_dump.txt | sort | uniq -c | sort -nr > hosts_summary.txt || echo "No hosts found"
               
-              # Display the captured data
-              echo "=== HTTP Requests ==="
-              cat http_requests.txt || echo "No HTTP requests file"
+              # Extract request bodies
+              echo "Extracting request bodies"
+              grep -A 10 "Request Body" mitmproxy_dump.txt > request_bodies.txt || echo "No request bodies found"
               
-              echo "=== Hosts Summary ==="
-              cat hosts_summary.txt || echo "No hosts summary file"
+              # Extract response bodies (might be large, so just getting headers)
+              echo "Extracting response headers"
+              grep -A 10 "Response Headers" mitmproxy_dump.txt > response_headers.txt || echo "No response headers found"
             else
               echo "No flows file found at ~/.mitmproxy/flows"
               # Kill the proxy process anyway
@@ -186,7 +187,65 @@ jobs:
           else
             echo "No mitmproxy process ID file found"
           fi
+          
+          # Create a directory for all output files
+          mkdir -p mitmproxy_data
 
+            # Display all captured data files
+      - name: Display HTTP Requests
+        run: |
+          echo "=== HTTP Requests ==="
+          if [ -f http_requests.txt ]; then
+            cat http_requests.txt
+          else
+            echo "No HTTP requests file found"
+          fi
+      
+      - name: Display Hosts Summary
+        run: |
+          echo "=== Hosts Summary ==="
+          if [ -f hosts_summary.txt ]; then
+            cat hosts_summary.txt
+          else
+            echo "No hosts summary file found"
+          fi
+      
+      - name: Display Request Bodies
+        run: |
+          echo "=== Request Bodies ==="
+          if [ -f request_bodies.txt ]; then
+            cat request_bodies.txt
+          else
+            echo "No request bodies file found"
+          fi
+      
+      - name: Display Response Headers
+        run: |
+          echo "=== Response Headers ==="
+          if [ -f response_headers.txt ]; then
+            cat response_headers.txt
+          else
+            echo "No response headers file found"
+          fi
+          
+      - name: Display Full Mitmproxy Dump (first 1000 lines)
+        run: |
+          echo "=== Mitmproxy Full Dump (first 1000 lines) ==="
+          if [ -f mitmproxy_dump.txt ]; then
+            head -n 1000 mitmproxy_dump.txt
+          else
+            echo "No mitmproxy dump file found"
+          fi
+          
+      - name: Find JSON in requests
+        run: |
+          echo "=== JSON Content in Requests ==="
+          if [ -f mitmproxy_dump.txt ]; then
+            grep -A 50 -B 5 '{"' mitmproxy_dump.txt || echo "No JSON content found"
+          else
+            echo "No mitmproxy dump file found"
+          fi
+      
       # Use tmate directly without proxy
       - name: Remove proxy environment variables
         run: |
