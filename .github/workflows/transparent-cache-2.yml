@@ -1,0 +1,247 @@
+name: Cache Direct Inspection
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: write
+
+jobs:
+  test-cache:
+    name: test-cache-inspection
+    runs-on: ubuntu-latest
+    env:
+      ACTIONS_STEP_DEBUG: true
+      ACTIONS_RUNNER_DEBUG: true
+      ACTIONS_RUNTIME_TOKEN_VERBOSE: true
+      ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: true
+      RUNNER_DEBUG: 1
+      ACTIONS_CACHE_DEBUG: true
+
+    steps:
+      - name: Install network tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tcpdump curl jq
+
+      - name: Create test file
+        run: |
+          echo "Hello from cache test" > test.txt
+          cat test.txt
+
+      - name: Debug cache environment variables
+        run: |
+          echo "=== Cache Environment Variables ==="
+          echo "BLACKSMITH_CACHE_URL: $BLACKSMITH_CACHE_URL"
+          echo "BLACKSMITH_CACHE_TOKEN: ${BLACKSMITH_CACHE_TOKEN:0:5}... (truncated)"
+          echo "ACTIONS_RUNTIME_TOKEN: ${ACTIONS_RUNTIME_TOKEN:0:5}... (truncated)"
+          echo "ACTIONS_CACHE_URL: $ACTIONS_CACHE_URL"
+          echo "ACTIONS_RESULTS_URL: $ACTIONS_RESULTS_URL"
+          
+          # Log environment variables to a file
+          env | sort > environment_variables.txt
+          
+          # Extract all variables with "TOKEN" in their name (masking content)
+          echo "=== TOKEN Variables (truncated for security) ==="
+          env | grep -i "token" | sed 's/\(.*TOKEN.*=\).*/\1****/' >> token_variables.txt
+          cat token_variables.txt
+          
+          echo "=== All Variables With URL ==="
+          env | grep -i "url" >> url_variables.txt
+          cat url_variables.txt
+
+      - name: Dump network stack
+        run: |
+          echo "=== Network Configuration ==="
+          ip addr
+          echo "=== Routing Table ==="
+          ip route
+          echo "=== Hosts File ==="
+          cat /etc/hosts
+          echo "=== Resolv Configuration ==="
+          cat /etc/resolv.conf
+          
+      - name: Start network capture for cache operation
+        run: |
+          echo "Starting tcpdump capture..."
+          sudo tcpdump -i any -n -s0 -w cache_traffic.pcap &
+          echo $! > tcpdump.pid
+          echo "tcpdump started with PID $(cat tcpdump.pid)"
+          sleep 2
+
+      - name: Save cache with debug
+        id: cache-save
+        run: |
+          # Create a script to wrap the cache save operation with debugging
+          cat > cache_save_wrapper.sh << 'EOF'
+          #!/bin/bash
+          set -x  # Enable command tracing
+          
+          # Record start time
+          date > cache_operation_start.txt
+          
+          # Run strace on the Node.js actions/cache save operation
+          ACTION_OUTPUT=$(strace -f -e trace=network -o cache_network_strace.log \
+            node -e "
+              const fs = require('fs');
+              const path = require('path');
+              const { execSync } = require('child_process');
+              
+              // Log Node.js environment
+              console.log('Node version:', process.version);
+              console.log('NODE_EXTRA_CA_CERTS:', process.env.NODE_EXTRA_CA_CERTS);
+              
+              // Attempt to save to cache using GitHub CLI
+              try {
+                // Use the GitHub CLI to save the cache
+                const cacheKey = 'test-cache-inspection-${{ github.run_id }}';
+                const command = \`gh actions-cache save test.txt --key \${cacheKey}\`;
+                console.log('Running command:', command);
+                const output = execSync(command, { encoding: 'utf8' });
+                console.log('Cache save output:', output);
+                fs.writeFileSync('cache_cli_output.txt', output);
+              } catch (error) {
+                console.error('Error saving cache:', error.message);
+                fs.writeFileSync('cache_error.txt', error.message);
+              }
+            "
+          )
+          
+          # Record end time
+          date > cache_operation_end.txt
+          
+          # Output the results
+          echo "Action output: $ACTION_OUTPUT"
+          EOF
+          
+          chmod +x cache_save_wrapper.sh
+          ./cache_save_wrapper.sh
+
+      - name: Try native cache action
+        id: cache-action-save
+        uses: actions/cache/save@v4
+        with:
+          path: test.txt
+          key: test-cache-inspection-${{ github.run_id }}-native
+
+      - name: Stop network capture
+        run: |
+          if [ -f tcpdump.pid ]; then
+            echo "Stopping tcpdump with PID $(cat tcpdump.pid)"
+            sudo kill $(cat tcpdump.pid) || true
+            sleep 2
+          fi
+          
+          # Process tcpdump output
+          if [ -f cache_traffic.pcap ]; then
+            echo "Processing network capture..."
+            
+            # Extract HTTP requests
+            sudo tcpdump -r cache_traffic.pcap -A | grep -A 2 -B 2 "HTTP/" > http_requests.txt || true
+            
+            # Look for authentication headers
+            sudo tcpdump -r cache_traffic.pcap -A | grep -A 2 -B 2 "Authorization:" > auth_headers.txt || true
+            
+            # Look for JSON payloads
+            sudo tcpdump -r cache_traffic.pcap -A | grep -A 10 -B 2 '{"' > json_payloads.txt || true
+            
+            # Look for connections to blacksmith
+            sudo tcpdump -r cache_traffic.pcap -A | grep -A 5 -B 5 "blacksmith" > blacksmith_connections.txt || true
+            
+            # Create a summary of all connections
+            sudo tcpdump -r cache_traffic.pcap -n | grep -E "IP .* > .*:" | sort | uniq -c | sort -nr > connection_summary.txt || true
+          else
+            echo "No tcpdump capture file found"
+          fi
+
+      - name: Display network inspection results
+        run: |
+          echo "=== HTTP Requests ==="
+          if [ -f http_requests.txt ]; then
+            cat http_requests.txt
+          else
+            echo "No HTTP requests found"
+          fi
+          
+          echo "=== Authentication Headers (redacted) ==="
+          if [ -f auth_headers.txt ]; then
+            # Redact actual token values for security
+            cat auth_headers.txt | sed 's/\(Authorization: Bearer\) .*/\1 [REDACTED]/g' | 
+              sed 's/\(Authorization: Basic\) .*/\1 [REDACTED]/g' |
+              sed 's/\(token=\)[^&]*/\1[REDACTED]/g'
+          else
+            echo "No authentication headers found"
+          fi
+          
+          echo "=== JSON Payloads ==="
+          if [ -f json_payloads.txt ]; then
+            cat json_payloads.txt
+          else
+            echo "No JSON payloads found"
+          fi
+          
+          echo "=== Blacksmith Connections ==="
+          if [ -f blacksmith_connections.txt ]; then
+            cat blacksmith_connections.txt
+          else
+            echo "No Blacksmith connections found"
+          fi
+          
+          echo "=== Connection Summary ==="
+          if [ -f connection_summary.txt ]; then
+            cat connection_summary.txt
+          else
+            echo "No connection summary found"
+          fi
+          
+          echo "=== Network Strace Log ==="
+          if [ -f cache_network_strace.log ]; then
+            cat cache_network_strace.log
+          else
+            echo "No network strace log found"
+          fi
+          
+          echo "=== Cache CLI Output ==="
+          if [ -f cache_cli_output.txt ]; then
+            cat cache_cli_output.txt
+          else
+            echo "No cache CLI output found"
+          fi
+          
+          echo "=== Cache Error ==="
+          if [ -f cache_error.txt ]; then
+            cat cache_error.txt
+          else
+            echo "No cache error found"
+          fi
+
+      - name: Debug internal files
+        run: |
+          echo "=== Looking for GitHub Actions cache related files ==="
+          
+          echo "Searching for cache files in runner directory:"
+          find /home/runner -name "*cache*" -type f 2>/dev/null || echo "No cache files found"
+          
+          echo "Searching for Actions toolkit files:"
+          find /home/runner -name "*.js" -path "*/actions/toolkit/*" -type f 2>/dev/null || echo "No toolkit files found"
+          
+          echo "Examining Node.js modules related to caching:"
+          ls -la /home/runner/work/_actions/actions/cache/ 2>/dev/null || echo "Cache action directory not found"
+          
+          # Try to find the cache implementation file
+          CACHE_FILE=$(find /home/runner -name "cache-save.js" -type f 2>/dev/null | head -1)
+          if [[ -n "$CACHE_FILE" ]]; then
+            echo "Found cache implementation at: $CACHE_FILE"
+            echo "First 50 lines of cache implementation:"
+            head -n 50 "$CACHE_FILE"
+          else
+            echo "No cache implementation file found"
+          fi
+
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+        with:
+          detached: true
