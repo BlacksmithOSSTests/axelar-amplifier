@@ -1,4 +1,3 @@
-```yaml
 name: Cache Test with tcpdump
 
 on:
@@ -279,4 +278,3 @@ jobs:
           ACTIONS_RUNTIME_TOKEN: ${{env.ACTIONS_RUNTIME_TOKEN}}
         with:
           detached: true
-```
