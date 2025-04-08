@@ -1,4 +1,4 @@
-name: Cache Test with tcpdump
+name: Cache Direct Inspection
 
 on:
   pull_request:
@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   test-cache:
-    name: test-transparent-cache
+    name: test-cache-inspection
     runs-on: blacksmith-staging
     env:
       ACTIONS_STEP_DEBUG: true
@@ -22,10 +22,10 @@ jobs:
       ACTIONS_CACHE_DEBUG: true
 
     steps:
-      - name: Install tcpdump
+      - name: Install network tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y tcpdump
+          sudo apt-get install -y tcpdump curl jq
 
       - name: Create test file
         run: |
@@ -34,243 +34,214 @@ jobs:
 
       - name: Debug cache environment variables
         run: |
-          echo "Checking cache environment variables before save operation..."
+          echo "=== Cache Environment Variables ==="
           echo "BLACKSMITH_CACHE_URL: $BLACKSMITH_CACHE_URL"
-          echo "BLACKSMITH_CACHE_TOKEN: ${BLACKSMITH_CACHE_TOKEN:0:5}..."
-          echo "ACTIONS_RUNTIME_TOKEN: ${ACTIONS_RUNTIME_TOKEN:0:5}..."
-          echo "Using ACTIONS_CACHE_URL: $ACTIONS_CACHE_URL"
-          echo "Using ACTIONS_RESULTS_URL: $ACTIONS_RESULTS_URL"
-      
-      - name: Setup node for HTTP inspection
+          echo "BLACKSMITH_CACHE_TOKEN: ${BLACKSMITH_CACHE_TOKEN:0:5}... (truncated)"
+          echo "ACTIONS_RUNTIME_TOKEN: ${ACTIONS_RUNTIME_TOKEN:0:5}... (truncated)"
+          echo "ACTIONS_CACHE_URL: $ACTIONS_CACHE_URL"
+          echo "ACTIONS_RESULTS_URL: $ACTIONS_RESULTS_URL"
+          
+          # Log environment variables to a file
+          env | sort > environment_variables.txt
+          
+          # Extract all variables with "TOKEN" in their name (masking content)
+          echo "=== TOKEN Variables (truncated for security) ==="
+          env | grep -i "token" | sed 's/\(.*TOKEN.*=\).*/\1****/' >> token_variables.txt
+          cat token_variables.txt
+          
+          echo "=== All Variables With URL ==="
+          env | grep -i "url" >> url_variables.txt
+          cat url_variables.txt
+
+      - name: Dump network stack
         run: |
-          node -v
-          npm -v
+          echo "=== Network Configuration ==="
+          ip addr
+          echo "=== Routing Table ==="
+          ip route
+          echo "=== Hosts File ==="
+          cat /etc/hosts
+          echo "=== Resolv Configuration ==="
+          cat /etc/resolv.conf
           
-          # Create a simple HTTP inspection script
-          cat > http-logger.js << 'EOF'
-          const http = require('http');
-          const https = require('https');
-          const fs = require('fs');
-          const { spawn } = require('child_process');
+      - name: Start network capture for cache operation
+        run: |
+          echo "Starting tcpdump capture..."
+          sudo tcpdump -i any -n -s0 -w cache_traffic.pcap &
+          echo $! > tcpdump.pid
+          echo "tcpdump started with PID $(cat tcpdump.pid)"
+          sleep 2
+
+      - name: Save cache with debug
+        id: cache-save
+        run: |
+          # Create a script to wrap the cache save operation with debugging
+          cat > cache_save_wrapper.sh << 'EOF'
+          #!/bin/bash
+          set -x  # Enable command tracing
           
-          // Create log file
-          const logFile = fs.createWriteStream('http_requests.log', { flags: 'a' });
+          # Record start time
+          date > cache_operation_start.txt
           
-          // Function to log details
-          function logRequest(req, res, body = '') {
-            const timestamp = new Date().toISOString();
-            const log = `\n[${timestamp}] ${req.method} ${req.url}\n`;
-            logFile.write(log);
-            logFile.write(`Headers: ${JSON.stringify(req.headers, null, 2)}\n`);
-            if (body) {
-              logFile.write(`Body: ${body}\n`);
-            }
-            logFile.write(`--------------------------\n`);
-          }
-          
-          // Create a simple HTTP proxy
-          const proxy = http.createServer((req, res) => {
-            console.log(`Proxying: ${req.method} ${req.url}`);
-            
-            let body = '';
-            req.on('data', (chunk) => {
-              body += chunk;
-            });
-            
-            req.on('end', () => {
-              logRequest(req, res, body);
+          # Run strace on the Node.js actions/cache save operation
+          ACTION_OUTPUT=$(strace -f -e trace=network -o cache_network_strace.log \
+            node -e "
+              const fs = require('fs');
+              const path = require('path');
+              const { execSync } = require('child_process');
               
-              // Determine if this is HTTP or HTTPS
-              const options = new URL(req.url);
-              const proxyReq = (options.protocol === 'https:' ? https : http).request(
-                options,
-                (proxyRes) => {
-                  res.writeHead(proxyRes.statusCode, proxyRes.headers);
-                  proxyRes.pipe(res, { end: true });
-                }
-              );
+              // Log Node.js environment
+              console.log('Node version:', process.version);
+              console.log('NODE_EXTRA_CA_CERTS:', process.env.NODE_EXTRA_CA_CERTS);
               
-              proxyReq.on('error', (error) => {
-                console.error(`Proxy request error: ${error.message}`);
-                res.writeHead(500);
-                res.end(`Proxy error: ${error.message}`);
-              });
-              
-              if (body) {
-                proxyReq.write(body);
+              // Attempt to save to cache using GitHub CLI
+              try {
+                // Use the GitHub CLI to save the cache
+                const cacheKey = 'test-cache-inspection-${{ github.run_id }}';
+                const command = \`gh actions-cache save test.txt --key \${cacheKey}\`;
+                console.log('Running command:', command);
+                const output = execSync(command, { encoding: 'utf8' });
+                console.log('Cache save output:', output);
+                fs.writeFileSync('cache_cli_output.txt', output);
+              } catch (error) {
+                console.error('Error saving cache:', error.message);
+                fs.writeFileSync('cache_error.txt', error.message);
               }
-              
-              proxyReq.end();
-            });
-          });
+            "
+          )
           
-          // Start tcpdump
-          const tcpdump = spawn('sudo', [
-            'tcpdump', 
-            '-i', 'any', 
-            '-n',
-            'port 80 or port 443 or port 9090 or port 9091', 
-            '-w', 'cache_traffic.pcap'
-          ]);
+          # Record end time
+          date > cache_operation_end.txt
           
-          tcpdump.stdout.on('data', (data) => {
-            console.log(`tcpdump stdout: ${data}`);
-          });
-          
-          tcpdump.stderr.on('data', (data) => {
-            console.error(`tcpdump stderr: ${data}`);
-          });
-          
-          // Start the proxy server
-          proxy.listen(8080, () => {
-            console.log('Proxy server listening on port 8080');
-          });
-          
-          // Handle cleanup
-          process.on('SIGINT', () => {
-            console.log('Stopping proxy server and tcpdump');
-            proxy.close();
-            tcpdump.kill('SIGINT');
-            process.exit();
-          });
+          # Output the results
+          echo "Action output: $ACTION_OUTPUT"
           EOF
           
-          # Start the HTTP inspection script
-          node http-logger.js &
-          echo $! > http-logger.pid
-          sleep 5
-          
-          # Check if the script is running
-          if ps -p $(cat http-logger.pid) > /dev/null; then
-            echo "HTTP logger script is running with PID $(cat http-logger.pid)"
-          else
-            echo "HTTP logger script failed to start"
-            exit 1
-          fi
+          chmod +x cache_save_wrapper.sh
+          ./cache_save_wrapper.sh
 
-      - name: Save cache without proxy (baseline)
+      - name: Try native cache action
+        id: cache-action-save
         uses: actions/cache/save@v4
         with:
           path: test.txt
-          key: test-direct-cache-${{ github.run_id }}-${{ github.run_attempt }}
+          key: test-cache-inspection-${{ github.run_id }}-native
 
-      - name: Setup proxy environment
+      - name: Stop network capture
         run: |
-          echo "http_proxy=http://127.0.0.1:8080" >> $GITHUB_ENV
-          echo "https_proxy=http://127.0.0.1:8080" >> $GITHUB_ENV
-          echo "HTTP_PROXY=http://127.0.0.1:8080" >> $GITHUB_ENV
-          echo "HTTPS_PROXY=http://127.0.0.1:8080" >> $GITHUB_ENV
-
-      - name: Save cache with proxy logging
-        id: cache-with-proxy
-        continue-on-error: true
-        uses: actions/cache/save@v4
-        env:
-          NODE_TLS_REJECT_UNAUTHORIZED: '0'  # Only for test environment
-        with:
-          path: test.txt
-          key: test-proxy-cache-${{ github.run_id }}-${{ github.run_attempt }}
-
-      - name: Stop HTTP logger and extract data
-        run: |
-          if [ -f http-logger.pid ]; then
-            echo "Stopping HTTP logger process"
-            kill $(cat http-logger.pid) || true
+          if [ -f tcpdump.pid ]; then
+            echo "Stopping tcpdump with PID $(cat tcpdump.pid)"
+            sudo kill $(cat tcpdump.pid) || true
             sleep 2
-          else
-            echo "No HTTP logger process ID file found"
           fi
           
-          # Stop tcpdump if running
-          sudo pkill tcpdump || true
-          
-          # Check if logs were captured
-          if [ -f http_requests.log ]; then
-            echo "HTTP request log file exists"
-            ls -la http_requests.log
-          else
-            echo "No HTTP request log file found"
-          fi
-          
-          # Check if pcap file was captured
+          # Process tcpdump output
           if [ -f cache_traffic.pcap ]; then
-            echo "tcpdump capture file exists"
-            ls -la cache_traffic.pcap
+            echo "Processing network capture..."
             
-            # Extract readable data from pcap
-            sudo tcpdump -r cache_traffic.pcap -A | grep -A 10 -B 10 "Authorization:" > tcpdump_auth_headers.txt || true
-            sudo tcpdump -r cache_traffic.pcap -A | grep -A 10 -B 10 "Host:" > tcpdump_host_headers.txt || true
+            # Extract HTTP requests
+            sudo tcpdump -r cache_traffic.pcap -A | grep -A 2 -B 2 "HTTP/" > http_requests.txt || true
+            
+            # Look for authentication headers
+            sudo tcpdump -r cache_traffic.pcap -A | grep -A 2 -B 2 "Authorization:" > auth_headers.txt || true
+            
+            # Look for JSON payloads
+            sudo tcpdump -r cache_traffic.pcap -A | grep -A 10 -B 2 '{"' > json_payloads.txt || true
+            
+            # Look for connections to blacksmith
+            sudo tcpdump -r cache_traffic.pcap -A | grep -A 5 -B 5 "blacksmith" > blacksmith_connections.txt || true
+            
+            # Create a summary of all connections
+            sudo tcpdump -r cache_traffic.pcap -n | grep -E "IP .* > .*:" | sort | uniq -c | sort -nr > connection_summary.txt || true
           else
             echo "No tcpdump capture file found"
           fi
 
-      - name: Display HTTP request logs
+      - name: Display network inspection results
         run: |
-          echo "=== HTTP Request Logs ==="
-          if [ -f http_requests.log ]; then
-            cat http_requests.log
+          echo "=== HTTP Requests ==="
+          if [ -f http_requests.txt ]; then
+            cat http_requests.txt
           else
-            echo "No HTTP request log file found"
+            echo "No HTTP requests found"
           fi
           
-      - name: Display tcpdump authentication headers
+          echo "=== Authentication Headers (redacted) ==="
+          if [ -f auth_headers.txt ]; then
+            # Redact actual token values for security
+            cat auth_headers.txt | sed 's/\(Authorization: Bearer\) .*/\1 [REDACTED]/g' | 
+              sed 's/\(Authorization: Basic\) .*/\1 [REDACTED]/g' |
+              sed 's/\(token=\)[^&]*/\1[REDACTED]/g'
+          else
+            echo "No authentication headers found"
+          fi
+          
+          echo "=== JSON Payloads ==="
+          if [ -f json_payloads.txt ]; then
+            cat json_payloads.txt
+          else
+            echo "No JSON payloads found"
+          fi
+          
+          echo "=== Blacksmith Connections ==="
+          if [ -f blacksmith_connections.txt ]; then
+            cat blacksmith_connections.txt
+          else
+            echo "No Blacksmith connections found"
+          fi
+          
+          echo "=== Connection Summary ==="
+          if [ -f connection_summary.txt ]; then
+            cat connection_summary.txt
+          else
+            echo "No connection summary found"
+          fi
+          
+          echo "=== Network Strace Log ==="
+          if [ -f cache_network_strace.log ]; then
+            cat cache_network_strace.log
+          else
+            echo "No network strace log found"
+          fi
+          
+          echo "=== Cache CLI Output ==="
+          if [ -f cache_cli_output.txt ]; then
+            cat cache_cli_output.txt
+          else
+            echo "No cache CLI output found"
+          fi
+          
+          echo "=== Cache Error ==="
+          if [ -f cache_error.txt ]; then
+            cat cache_error.txt
+          else
+            echo "No cache error found"
+          fi
+
+      - name: Debug internal files
         run: |
-          echo "=== tcpdump Authentication Headers ==="
-          if [ -f tcpdump_auth_headers.txt ]; then
-            cat tcpdump_auth_headers.txt
+          echo "=== Looking for GitHub Actions cache related files ==="
+          
+          echo "Searching for cache files in runner directory:"
+          find /home/runner -name "*cache*" -type f 2>/dev/null || echo "No cache files found"
+          
+          echo "Searching for Actions toolkit files:"
+          find /home/runner -name "*.js" -path "*/actions/toolkit/*" -type f 2>/dev/null || echo "No toolkit files found"
+          
+          echo "Examining Node.js modules related to caching:"
+          ls -la /home/runner/work/_actions/actions/cache/ 2>/dev/null || echo "Cache action directory not found"
+          
+          # Try to find the cache implementation file
+          CACHE_FILE=$(find /home/runner -name "cache-save.js" -type f 2>/dev/null | head -1)
+          if [[ -n "$CACHE_FILE" ]]; then
+            echo "Found cache implementation at: $CACHE_FILE"
+            echo "First 50 lines of cache implementation:"
+            head -n 50 "$CACHE_FILE"
           else
-            echo "No tcpdump authentication headers file found"
-          fi
-          
-      - name: Display tcpdump host headers
-        run: |
-          echo "=== tcpdump Host Headers ==="
-          if [ -f tcpdump_host_headers.txt ]; then
-            cat tcpdump_host_headers.txt
-          else
-            echo "No tcpdump host headers file found"
-          fi
-          
-      # Try direct network inspection as a last resort
-      - name: Direct network inspection
-        run: |
-          echo "Performing direct network inspection during cache operation..."
-          
-          # Start tcpdump in background
-          sudo tcpdump -i any -n port 80 or port 443 or port 9090 or port 9091 -w direct_cache_traffic.pcap &
-          TCPDUMP_PID=$!
-          sleep 2
-          
-          # Run curl to the cache URL to see what headers are sent
-          if [ -n "$ACTIONS_CACHE_URL" ]; then
-            echo "Testing connection to ACTIONS_CACHE_URL: $ACTIONS_CACHE_URL"
-            curl -v $ACTIONS_CACHE_URL || echo "Failed to connect to ACTIONS_CACHE_URL"
-          fi
-          
-          if [ -n "$ACTIONS_RESULTS_URL" ]; then
-            echo "Testing connection to ACTIONS_RESULTS_URL: $ACTIONS_RESULTS_URL"
-            curl -v $ACTIONS_RESULTS_URL || echo "Failed to connect to ACTIONS_RESULTS_URL"
-          fi
-          
-          sleep 5
-          
-          # Stop tcpdump
-          sudo kill $TCPDUMP_PID || true
-          
-          # Process the pcap file
-          if [ -f direct_cache_traffic.pcap ]; then
-            echo "Direct tcpdump capture file exists"
-            sudo tcpdump -r direct_cache_traffic.pcap -A > direct_network_inspection.txt
-            
-            echo "=== Direct Network Inspection Results ==="
-            cat direct_network_inspection.txt
-          else
-            echo "No direct tcpdump capture file found"
+            echo "No cache implementation file found"
           fi
 
       - name: Setup tmate session
         uses: mxschmitt/action-tmate@v3
-        env:
-          ACTIONS_RUNTIME_TOKEN: ${{env.ACTIONS_RUNTIME_TOKEN}}
         with:
           detached: true
