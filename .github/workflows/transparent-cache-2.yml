@@ -12,7 +12,7 @@ permissions:
 jobs:
   test-cache:
     name: test-cache-inspection
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-staging
     env:
       ACTIONS_STEP_DEBUG: true
       ACTIONS_RUNNER_DEBUG: true
