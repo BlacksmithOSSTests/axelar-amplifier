@@ -36,7 +36,7 @@ jobs:
       - name: Create test file
         run: |
           # Create a 300MB test file named test.txt
-          dd if=/dev/zero of=test.txt bs=1M count=300
+          dd if=/dev/urandom of=test.txt bs=1M count=300
           
           # Show file size
           ls -lh test.txt
