@@ -155,8 +155,7 @@ jobs:
           
       # Add your network capture analysis steps here...
       
-      - name: Setup tmate session for debugging if needed
-        if: failure()
+      - name: Setup tmate session for debugging
         uses: mxschmitt/action-tmate@v3
         with:
           detached: true
