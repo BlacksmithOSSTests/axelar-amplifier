@@ -14,18 +14,18 @@ jobs:
     name: test-cache-inspection
     runs-on: blacksmith-staging
     env:
-      # Enable Azure SDK logging
-      AZURE_LOG_LEVEL: verbose             # Set SDK logging to verbose level
-      AZURE_STORAGE_LOGGER_LEVEL: "debug"  # Specific to storage operations
-      NODE_DEBUG: "http,https,net,azure"   # Enable Node.js detailed HTTP logging
+      # # Enable Azure SDK logging
+      # AZURE_LOG_LEVEL: verbose             # Set SDK logging to verbose level
+      # AZURE_STORAGE_LOGGER_LEVEL: "debug"  # Specific to storage operations
+      # NODE_DEBUG: "http,https,net,azure"   # Enable Node.js detailed HTTP logging
       
-      # GitHub Actions debug flags (you already have these)
-      ACTIONS_STEP_DEBUG: true
-      ACTIONS_RUNNER_DEBUG: true
-      ACTIONS_RUNTIME_TOKEN_VERBOSE: true
-      ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: true
-      RUNNER_DEBUG: 1
-      ACTIONS_CACHE_DEBUG: true
+      # # GitHub Actions debug flags (you already have these)
+      # ACTIONS_STEP_DEBUG: true
+      # ACTIONS_RUNNER_DEBUG: true
+      # ACTIONS_RUNTIME_TOKEN_VERBOSE: true
+      # ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: true
+      # RUNNER_DEBUG: 1
+      # ACTIONS_CACHE_DEBUG: true
 
     steps:
       # - name: Install network tools
