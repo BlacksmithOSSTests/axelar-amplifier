@@ -16,16 +16,16 @@ jobs:
     env:
       # Enable Azure SDK logging
       AZURE_LOG_LEVEL: verbose             # Set SDK logging to verbose level
-      # AZURE_STORAGE_LOGGER_LEVEL: "debug"  # Specific to storage operations
-      # NODE_DEBUG: "http,https,net,azure"   # Enable Node.js detailed HTTP logging
+      AZURE_STORAGE_LOGGER_LEVEL: "debug"  # Specific to storage operations
+      NODE_DEBUG: "http,https,net,azure"   # Enable Node.js detailed HTTP logging
       
-      # # GitHub Actions debug flags (you already have these)
-      # ACTIONS_STEP_DEBUG: true
-      # ACTIONS_RUNNER_DEBUG: true
-      # ACTIONS_RUNTIME_TOKEN_VERBOSE: true
-      # ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: true
-      # RUNNER_DEBUG: 1
-      # ACTIONS_CACHE_DEBUG: true
+      # GitHub Actions debug flags (you already have these)
+      ACTIONS_STEP_DEBUG: true
+      ACTIONS_RUNNER_DEBUG: true
+      ACTIONS_RUNTIME_TOKEN_VERBOSE: true
+      ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: true
+      RUNNER_DEBUG: 1
+      ACTIONS_CACHE_DEBUG: true
 
     steps:
       # - name: Install network tools
@@ -33,13 +33,13 @@ jobs:
       #     sudo apt-get update
       #     sudo apt-get install -y tcpdump curl jq
           
-      # - name: Create test file
-      #   run: |
-      #     # Create a 300MB test file named test.txt
-      #     dd if=/dev/urandom of=test.txt bs=1M count=300
+      - name: Create test file
+        run: |
+          # Create a 300MB test file named test.txt
+          dd if=/dev/urandom of=test.txt bs=1M count=300
           
-      #     # Show file size
-      #     ls -lh test.txt
+          # Show file size
+          ls -lh test.txt
           
       # Add your existing debug steps here...
       
@@ -146,12 +146,20 @@ jobs:
       #       sdk_verbose_logs.txt
       #       cache_operation_*.txt
           
-      # - name: Try native cache action
-      #   id: cache-action-save
-      #   uses: actions/cache/save@v4
-      #   with:
-      #     path: test.txt
-      #     key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
+      - name: Try native cache action
+        id: cache-action-save
+        uses: actions/cache/save@v4
+        with:
+          path: test.txt
+          key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
+
+      - name: Restore from cache
+        uses: actions/cache/restore@v3
+        id: cache-restore
+        with:
+          path: test.txt
+          key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
+          fail-on-cache-miss: true
           
       # Add your network capture analysis steps here...
       
