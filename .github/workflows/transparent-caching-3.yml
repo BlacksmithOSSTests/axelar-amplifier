@@ -146,20 +146,20 @@ jobs:
       #       sdk_verbose_logs.txt
       #       cache_operation_*.txt
           
-      - name: Try native cache action
-        id: cache-action-save
-        uses: actions/cache/save@v4
-        with:
-          path: test.txt
-          key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
+      # - name: Try native cache action
+      #   id: cache-action-save
+      #   uses: actions/cache/save@v4
+      #   with:
+      #     path: test.txt
+      #     key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
 
-      - name: Restore from cache
-        uses: actions/cache/restore@v3
-        id: cache-restore
-        with:
-          path: test.txt
-          key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
-          fail-on-cache-miss: true
+      # - name: Restore from cache
+      #   uses: actions/cache/restore@v3
+      #   id: cache-restore
+      #   with:
+      #     path: test.txt
+      #     key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
+      #     fail-on-cache-miss: true
           
       # Add your network capture analysis steps here...
       
