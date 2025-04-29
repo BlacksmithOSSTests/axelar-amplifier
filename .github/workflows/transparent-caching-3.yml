@@ -27,12 +27,7 @@ jobs:
       RUNNER_DEBUG: 1
       ACTIONS_CACHE_DEBUG: true
 
-    steps:
-      # - name: Install network tools
-      #   run: |
-      #     sudo apt-get update
-      #     sudo apt-get install -y tcpdump curl jq
-          
+    steps:          
       - name: Create test file
         run: |
           # Create a 300MB test file named test.txt
@@ -42,124 +37,21 @@ jobs:
           ls -lh test.txt
           
       # Add your existing debug steps here...
-      
-      # - name: Save cache with enhanced logging
-      #   id: cache-save
-      #   run: |
-      #     # Create a script with enhanced logging for the Azure SDK
-      #     cat > cache_save_wrapper.sh << 'EOF'
-      #     #!/bin/bash
-      #     set -x  # Enable command tracing
           
-      #     # Record start time
-      #     date > cache_operation_start.txt
-          
-      #     # Create a Node.js script with detailed logging
-      #     cat > cache_operation.js << 'NODE_SCRIPT'
-      #     const fs = require('fs');
-      #     const { BlobServiceClient } = require('@azure/storage-blob');
-          
-      #     // Configure detailed logging for Azure SDK
-      #     const { setLogLevel } = require("@azure/logger");
-      #     setLogLevel("verbose");
-          
-      #     async function runTest() {
-      #       try {
-      #         console.log('Starting cache upload operation');
-              
-      #         // Get credentials from environment (this is how Actions toolkit likely does it)
-      #         const cacheUrl = process.env.ACTIONS_CACHE_URL || process.env.BLACKSMITH_CACHE_URL;
-      #         const cacheToken = process.env.ACTIONS_RUNTIME_TOKEN || process.env.BLACKSMITH_CACHE_TOKEN;
-              
-      #         console.log(`Cache URL: ${cacheUrl}`);
-      #         console.log(`Cache token available: ${cacheToken ? 'Yes' : 'No'}`);
-              
-      #         // Log headers sent with each request
-      #         process.env.NODE_DEBUG_HEADERS = "1";
-              
-      #         // Read the file to cache
-      #         const data = fs.readFileSync('test.txt');
-      #         console.log(`Read file, size: ${data.length} bytes`);
-              
-      #         // Attempt to use GitHub Actions toolkit API first
-      #         const { saveCache } = require('@actions/cache');
-      #         try {
-      #           console.log('Attempting to use @actions/cache API...');
-      #           const cacheId = await saveCache(['test.txt'], 'test-cache-inspection-enhanced-logging');
-      #           console.log(`Cache saved with ID: ${cacheId}`);
-      #         } catch (toolkitError) {
-      #           console.error('Error using toolkit API:', toolkitError);
-                
-      #           // Direct usage of BlobServiceClient as fallback
-      #           console.log('Falling back to direct Azure Storage SDK usage...');
-                
-      #           // This is a simplified example - the actual GitHub Actions implementation 
-      #           // would have more complex authentication and URL handling
-      #           const blobServiceClient = new BlobServiceClient(cacheUrl, { token: cacheToken });
-      #           console.log('Created BlobServiceClient');
-                
-      #           // Log all SDK operations
-      #           blobServiceClient.enableLogging(true, {
-      #             log: (msg) => console.log(`AZURE SDK: ${msg}`),
-      #             error: (msg) => console.error(`AZURE SDK ERROR: ${msg}`)
-      #           });
-                
-      #           const containerClient = blobServiceClient.getContainerClient('cache');
-      #           const blobClient = containerClient.getBlobClient('test-blob');
-      #           const blockBlobClient = blobClient.getBlockBlobClient();
-                
-      #           console.log('Uploading blob...');
-      #           const uploadResponse = await blockBlobClient.upload(data, data.length);
-      #           console.log('Upload response:', JSON.stringify(uploadResponse, null, 2));
-      #         }
-      #       } catch (error) {
-      #         console.error('Operation failed:', error.message);
-      #         console.error('Stack trace:', error.stack);
-      #         process.exit(1);
-      #       }
-      #     }
-          
-      #     runTest().catch(err => {
-      #       console.error('Unhandled error:', err);
-      #       process.exit(1);
-      #     });
-      #     NODE_SCRIPT
-          
-      #     # Install necessary dependencies
-      #     npm install @azure/storage-blob @azure/logger @actions/cache
-          
-      #     # Run with maximum verbosity
-      #     NODE_DEBUG=http,https,net,azure,*,tls node cache_operation.js 2>&1 | tee sdk_verbose_logs.txt
-          
-      #     # Record end time
-      #     date > cache_operation_end.txt
-      #     EOF
-          
-      #     chmod +x cache_save_wrapper.sh
-      #     ./cache_save_wrapper.sh
-          
-      # - name: Upload SDK logs
-      #   uses: actions/upload-artifact@v4  # Updated to v4
-      #   with:
-      #     name: sdk-logs
-      #     path: |
-      #       sdk_verbose_logs.txt
-      #       cache_operation_*.txt
-          
-      # - name: Try native cache action
-      #   id: cache-action-save
-      #   uses: actions/cache/save@v4
-      #   with:
-      #     path: test.txt
-      #     key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
+      - name: Try native cache action
+        id: cache-action-save
+        uses: actions/cache/save@v4
+        with:
+          path: test.txt
+          key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
 
-      # - name: Restore from cache
-      #   uses: actions/cache/restore@v3
-      #   id: cache-restore
-      #   with:
-      #     path: test.txt
-      #     key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
-      #     fail-on-cache-miss: true
+      - name: Restore from cache
+        uses: actions/cache/restore@v3
+        id: cache-restore
+        with:
+          path: test.txt
+          key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
+          fail-on-cache-miss: true
           
       # Add your network capture analysis steps here...
       
