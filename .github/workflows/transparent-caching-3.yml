@@ -27,15 +27,13 @@ jobs:
       ACTIONS_CACHE_DEBUG: true
 
     steps:          
-      - name: Create test file
+      - name: Create a 300MB test file
         run: |
           # Create a 300MB test file named test.txt
           dd if=/dev/urandom of=test.txt bs=1M count=300
           
           # Show file size
           ls -lh test.txt
-          
-      # Add your existing debug steps here...
           
       - name: Try native cache action
         id: cache-action-save
@@ -51,3 +49,50 @@ jobs:
           path: test.txt
           key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
           fail-on-cache-miss: true
+          
+      - name: Create a 8GB test file
+        run: |
+          # Create a 8GB test file named test-large.txt
+          dd if=/dev/urandom of=test-large.txt bs=1M count=8000
+          
+          # Show file size
+          ls -lh test-large.txt
+          
+      - name: Try native cache action
+        id: cache-action-save-large
+        uses: actions/cache/save@v4
+        with:
+          path: test-large.txt
+          key: test-cache-inspection-large-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
+
+      - name: Restore from cache
+        uses: actions/cache/restore@v3
+        id: cache-restore-large
+        with:
+          path: test-large.txt
+          key: test-cache-inspection-large-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
+          fail-on-cache-miss: true
+
+      - name: Create a 1MB test file
+        run: |
+          # Create a 1MB test file named test-small.txt
+          dd if=/dev/urandom of=test-small.txt bs=1M count=1
+          
+          # Show file size
+          ls -lh test-small.txt
+          
+      - name: Try native cache action
+        id: cache-action-save-small
+        uses: actions/cache/save@v4
+        with:
+          path: test-small.txt
+          key: test-cache-inspection-small-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
+
+      - name: Restore from cache
+        uses: actions/cache/restore@v3
+        id: cache-restore-small
+        with:
+          path: test-small.txt
+          key: test-cache-inspection-small-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
+          fail-on-cache-miss: true
+          
