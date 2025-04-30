@@ -17,7 +17,6 @@ jobs:
       # Enable Azure SDK logging
       AZURE_LOG_LEVEL: verbose             # Set SDK logging to verbose level
       AZURE_STORAGE_LOGGER_LEVEL: "debug"  # Specific to storage operations
-      NODE_DEBUG: "http,https,net,azure"   # Enable Node.js detailed HTTP logging
       
       # GitHub Actions debug flags (you already have these)
       ACTIONS_STEP_DEBUG: true
@@ -52,10 +51,3 @@ jobs:
           path: test.txt
           key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
           fail-on-cache-miss: true
-          
-      # Add your network capture analysis steps here...
-      
-      - name: Setup tmate session for debugging
-        uses: mxschmitt/action-tmate@v3
-        with:
-          detached: true
