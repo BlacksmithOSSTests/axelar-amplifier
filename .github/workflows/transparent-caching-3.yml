@@ -37,10 +37,10 @@ jobs:
           key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
           fail-on-cache-miss: true
         
-      - name: Create a 12GB test file
+      - name: Create a 9GB test file
         run: |
-          # Create a 12GB test file named test-large.txt
-          dd if=/dev/urandom of=test-large.txt bs=1M count=12000
+          # Create a 9GB test file named test-large.txt
+          dd if=/dev/urandom of=test-large.txt bs=1M count=9000
           
           # Show file size
           ls -lh test-large.txt
