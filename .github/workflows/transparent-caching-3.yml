@@ -30,7 +30,7 @@ jobs:
           key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
 
       - name: Restore from cache
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v4
         id: cache-restore
         with:
           path: test.txt
@@ -53,7 +53,7 @@ jobs:
           key: test-cache-inspection-large-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
 
       - name: Restore from cache
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v4
         id: cache-restore-large
         with:
           path: test-large.txt
@@ -76,7 +76,7 @@ jobs:
           key: test-cache-inspection-small-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
 
       - name: Restore from cache
-        uses: actions/cache/restore@v3
+        uses: actions/cache/restore@v4
         id: cache-restore-small
         with:
           path: test-small.txt
