@@ -13,19 +13,6 @@ jobs:
   test-cache:
     name: test-cache-inspection
     runs-on: blacksmith-staging
-    env:
-      # Enable Azure SDK logging
-      AZURE_LOG_LEVEL: verbose             # Set SDK logging to verbose level
-      AZURE_STORAGE_LOGGER_LEVEL: "debug"  # Specific to storage operations
-      
-      # GitHub Actions debug flags (you already have these)
-      ACTIONS_STEP_DEBUG: true
-      ACTIONS_RUNNER_DEBUG: true
-      ACTIONS_RUNTIME_TOKEN_VERBOSE: true
-      ACTIONS_RUNNER_PRINT_LOG_TO_STDOUT: true
-      RUNNER_DEBUG: 1
-      ACTIONS_CACHE_DEBUG: true
-
     steps:          
       - name: Create a 300MB test file
         run: |
@@ -49,11 +36,11 @@ jobs:
           path: test.txt
           key: test-cache-inspection-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
           fail-on-cache-miss: true
-          
-      - name: Create a 8GB test file
+        
+      - name: Create a 12GB test file
         run: |
-          # Create a 8GB test file named test-large.txt
-          dd if=/dev/urandom of=test-large.txt bs=1M count=8000
+          # Create a 12GB test file named test-large.txt
+          dd if=/dev/urandom of=test-large.txt bs=1M count=12000
           
           # Show file size
           ls -lh test-large.txt
@@ -95,4 +82,9 @@ jobs:
           path: test-small.txt
           key: test-cache-inspection-small-${{ github.run_id }}-${{ github.run_attempt }}-${{ github.run_number }}-${{ github.sha }}
           fail-on-cache-miss: true
-          
+
+      - name: Delete All Caches
+        uses: useblacksmith/cache-delete@v1
+        with:
+          key: test-cache-inspection-
+          prefix: true
