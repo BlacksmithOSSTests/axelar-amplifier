@@ -1,8 +1,12 @@
 name: Cache Inspection - Blacksmith Runner
 
 on:
-  pull_request:
   workflow_dispatch:
+    inputs:
+      label:
+        description: "Devbox label (e.g. bs-dev-paul)"
+        required: true
+        type: string
 
 permissions:
   actions: read
@@ -11,8 +15,12 @@ permissions:
 
 jobs:
   test-cache:
-    name: test-cache-inspection
-    runs-on: blacksmith-staging
+    strategy:
+      matrix:
+        platform: [blacksmith-staging-32vcpu-ubuntu-2404]
+    runs-on:
+      - ${{ matrix.platform }}
+      - ${{ github.event.inputs.label }}
     steps:          
       - name: Create a 300MB test file
         run: |
