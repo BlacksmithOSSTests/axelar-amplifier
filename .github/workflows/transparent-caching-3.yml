@@ -1,6 +1,7 @@
 name: Cache Inspection - Blacksmith Runner
 
 on:
+  pull_request:
   workflow_dispatch:
     inputs:
       label:
