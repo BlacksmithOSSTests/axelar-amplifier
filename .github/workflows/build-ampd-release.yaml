@@ -35,7 +35,7 @@ jobs:
     needs: extract-semver
     strategy:
       matrix:
-        os: [ blacksmith-8vcpu-ubuntu-2204, macos-12 ]
+        os: [ blacksmith-4vcpu-ubuntu-2204, macos-12 ]
         arch: [ amd64, arm64 ]
 
     permissions:
