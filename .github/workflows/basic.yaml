@@ -20,7 +20,7 @@ jobs:
           - blacksmith-staging-4vcpu-ubuntu-2404
           - blacksmith-4vcpu-ubuntu-2404
           # run on ubuntu-latest to verify compatibility
-          - blacksmith-4vcpu-ubuntu-2404
+          - blacksmith-2vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
