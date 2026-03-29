@@ -22,7 +22,7 @@ jobs:
           - blacksmith-2vcpu-windows-2025
           - blacksmith-staging-2vcpu-windows-2025
           # run on ubuntu-latest to verify compatibility
-          - ubuntu-latest
+          - blacksmith-4vcpu-ubuntu-2404
     steps:
       - uses: actions/checkout@v4
 
