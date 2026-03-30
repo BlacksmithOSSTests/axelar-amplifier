@@ -10,7 +10,7 @@ on:
 
 jobs:
   extract-semver:
-    runs-on: blacksmith-4vcpu-ubuntu-2204
+    runs-on: blacksmith-16vcpu-ubuntu-2204
     name: Validate tag and extract semver
     outputs:
       semver: ${{ steps.extract_semver.outputs.semver }}
