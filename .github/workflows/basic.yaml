@@ -155,7 +155,7 @@ jobs:
         uses: baptiste0928/cargo-install@v2
         with:
           crate: cargo-sort
-          version: "1.1.0"
+          version: "1.0.9"
 
       - name: Run cargo fmt
         uses: actions-rs/cargo@v1
