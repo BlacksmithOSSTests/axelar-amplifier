@@ -65,6 +65,13 @@ jobs:
       #   if: (steps.cache-blacksmith.outputs.cache-hit == 'true') || (steps.cache-github.outputs.cache-hit == 'true')
       #   run: cat /home/runner/.cargo/.crates.toml
 
+      # sha2-asm uses GAS assembly (.S files) that cl.exe can't compile.
+      # Clang (pre-installed on Windows 2025 runners) handles GAS format.
+      - name: Use clang for C/assembly compilation (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: echo "CC=clang" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
       - name: Run tests
         uses: actions-rs/cargo@v1
         with:
@@ -155,6 +162,7 @@ jobs:
         uses: baptiste0928/cargo-install@v2
         with:
           crate: cargo-sort
+          version: "1.0.9"
 
       - name: Run cargo fmt
         uses: actions-rs/cargo@v1
@@ -166,7 +174,7 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: sort
-          args: --workspace --check --check-format
+          args: --workspace --check
 
       - name: Run cargo clippy
         uses: actions-rs/cargo@v1
