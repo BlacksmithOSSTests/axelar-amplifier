@@ -65,12 +65,20 @@ jobs:
       #   if: (steps.cache-blacksmith.outputs.cache-hit == 'true') || (steps.cache-github.outputs.cache-hit == 'true')
       #   run: cat /home/runner/.cargo/.crates.toml
 
-      # sha2-asm uses GAS assembly (.S files) that cl.exe can't compile.
-      # Clang (pre-installed on Windows 2025 runners) handles GAS format.
-      - name: Use clang for C/assembly compilation (Windows)
+      # sha2-asm uses GAS assembly (.S files) that MSVC cl.exe cannot compile.
+      # Clang handles GAS format. Check the standard install location first;
+      # install via chocolatey if not present.
+      - name: Set up clang for Windows assembly compilation
         if: runner.os == 'Windows'
         shell: pwsh
-        run: echo "CC=clang" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+        run: |
+          if (Test-Path "C:\Program Files\LLVM\bin\clang.exe") {
+            echo "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          } else {
+            choco install llvm --no-progress -y
+            echo "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          }
+          echo "CC=clang" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Run tests
         uses: actions-rs/cargo@v1
