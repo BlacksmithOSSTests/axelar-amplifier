@@ -41,6 +41,7 @@ jobs:
 
       - name: Setup Blacksmith Builder
         uses: useblacksmith/setup-docker-builder@v1
+        if: steps.image-tag-check.outputs.image_tag_exists == 0
 
       - uses: useblacksmith/build-push-action@v2
         if: steps.image-tag-check.outputs.image_tag_exists == 0
